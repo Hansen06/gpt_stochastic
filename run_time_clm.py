@@ -14,9 +14,6 @@ from typing import Optional
 import wandb
 import torch
 
-import sys
-sys.path.append(r'../../../..')
-
 
 import transformers.src.transformers
 from transformers.src.transformers import (
@@ -456,7 +453,6 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    sys.path.append(r'../../../../..')
     import constants
     model_args.cache_dir = constants.PATH2HUGGINGFACE
     gpt2_path = constants.PATH2GPT

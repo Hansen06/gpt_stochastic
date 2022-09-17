@@ -37,10 +37,7 @@ from ....transformers import (
     GPT2Tokenizer,
 )
 
-import sys
-sys.path.append(r'../../../../..')
-
-from stochastic.src import constants
+import constants
 
 logger = logging.get_logger(__name__)
 
@@ -787,7 +784,6 @@ class StoriesDataset(TextDataset):
                  overwrite_cache=False,
                  cache_dir: Optional[str] = None,
                  ):
-        from stochastic.src import constants
         fpath = os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.train.txt")
         super(StoriesDataset, self).__init__(
                  tokenizer=tokenizer,

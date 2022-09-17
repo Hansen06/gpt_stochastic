@@ -53,6 +53,7 @@ from ...utils import logging
 from ...utils.model_parallel_utils import assert_device_map, get_device_map
 from .configuration_gpt2 import GPT2Config
 
+import constants
 
 logger = logging.get_logger(__name__)
 
@@ -587,7 +588,7 @@ class GPT2TimeModel(GPT2PreTrainedModel):
         if hasattr(config, "cl_latent_dim") and config.cl_latent_dim is not None:
             self.cl2e = nn.Linear(config.cl_latent_dim, self.embed_dim)
 
-        self.cl_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        self.cl_tokenizer = GPT2Tokenizer.from_pretrained(constants.PATH2GPT)
         self.cl_tokenizer.pad_token = self.cl_tokenizer.eos_token
         self.cl_end_token = self.cl_tokenizer.eos_token_id
 

@@ -7,10 +7,10 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 import wandb
 
-from datasets import tickettalk, erke
+from my_datasets import tickettalk, erke
 
 
-import datasets
+import my_datasets
 
 NAME2DATASET = {
     'tickettalk': tickettalk.TicketTalkTriplet,
@@ -60,7 +60,7 @@ class BrownianBridgeSystem(pl.LightningModule):
         dname = self.config.data_params.name
         if 'recipe' == dname:
             self.data_dir = constants.PATH2RECIPENLG
-            self.all_dataset = datasets.load_dataset("recipe_nlg", data_dir=self.data_dir)['train']
+            self.all_dataset = my_datasets.load_dataset("recipe_nlg", data_dir=self.data_dir)['train']
         elif 'wikihow' == dname:
             self.data_name = constants.PATH2WIKIHOW
             with open(self.data_name, 'rb') as f:
