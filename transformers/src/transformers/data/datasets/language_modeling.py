@@ -1073,7 +1073,7 @@ class RecipeDataset(TextDataset):
         self.cl_embeddings.append(cl_embeddings)
 
     def set_cl_tokenizer(self):
-        self.cl_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        self.cl_tokenizer = GPT2Tokenizer.from_pretrained(constants.PATH2GPT)
         self.cl_tokenizer.pad_token = self.cl_tokenizer.eos_token
         self.cl_tokenizer.add_tokens(self.special_words)
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import wandb
 import torch
+import constants
 
 
 import transformers.src.transformers
@@ -254,32 +255,6 @@ def get_dataset(
             block_size=args.block_size,
             cl_model=cl_model
         )
-    elif args.dataset_name == 'roc_stories':
-        dataset = StoriesDataset(
-            tokenizer=tokenizer,
-            file_path=file_path,
-            block_size=args.block_size,
-            special_words=special_words,
-            cl_model=cl_model
-        )
-    elif args.dataset_name == 'wikihow':
-        dataset = WikihowDataset(
-            tokenizer=tokenizer,
-            file_path=file_path,
-            use_section_null=args.use_section_null,
-            special_words=special_words,
-            block_size=args.block_size,
-            cl_model=cl_model
-        )
-    elif args.dataset_name == 'recipe':
-        dataset = RecipeDataset(
-            tokenizer=tokenizer,
-            file_path=file_path,
-            use_section_null=args.use_section_null,
-            special_words=special_words,
-            block_size=args.block_size,
-            cl_model=cl_model
-        )
     elif 'tm2' in args.dataset_name or 'tickettalk' in args.dataset_name:
         dataset = TaskmasterDataset(
             tokenizer=tokenizer,
@@ -453,7 +428,7 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    import constants
+
     model_args.cache_dir = constants.PATH2HUGGINGFACE
     gpt2_path = constants.PATH2GPT
 
