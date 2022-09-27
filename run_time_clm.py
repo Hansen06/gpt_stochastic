@@ -30,10 +30,8 @@ from transformers.src.transformers import (
     PreTrainedTokenizer,
     DataCollatorForTimeControl,
     WikisectionDataset,
-    StoriesDataset,
     RecipeDataset,
     TaskmasterDataset,
-    WikihowDataset,
     GPT2TimeLMHeadModel,
 )
 
@@ -42,7 +40,7 @@ from transformers.src.transformers.utils import check_min_version
 from transformers.src.transformers.utils.versions import require_version
 
 import torch.nn as nn
-
+from model import language
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.8.0.dev0")
@@ -255,8 +253,18 @@ def get_dataset(
             block_size=args.block_size,
             cl_model=cl_model
         )
-    elif 'tm2' in args.dataset_name or 'tickettalk' in args.dataset_name:
+    elif 'tickettalk' in args.dataset_name:
         dataset = TaskmasterDataset(
+            tokenizer=tokenizer,
+            file_path=file_path,
+            use_section_null=args.use_section_null,
+            special_words=special_words,
+            block_size=args.block_size,
+            cl_model=cl_model,
+            name=args.dataset_name
+        )
+    elif 'erke' in args.dataset_name:
+        dataset = EekeDataset(
             tokenizer=tokenizer,
             file_path=file_path,
             use_section_null=args.use_section_null,
@@ -278,7 +286,7 @@ HIDDEN_DIM = 128
 
 def load_cl_model(filepath, latent_dim, base_model, use_section_ids,
                   token_size):
-    from model import language
+
     model = language.GPT2OUEncoder(
          hidden_dim=HIDDEN_DIM,
          latent_dim=latent_dim,
@@ -333,25 +341,12 @@ def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
 
 def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
     SECTION_IDS = []
-    if "wikisection" == dataset_name:
-        SECTION_IDS = ['[ ABSTRACT ]', '[ HISTORY ]', '[ GEOGRAPHY ]', '[ DEMOGRAPHICS ]']
-    if 'recipe' in dataset_name:
-        SECTION_IDS = [
-            '[ TITLE ]',
-            '[ INGREDIENTS ]',
-            '[ DIRECTIONS ]'
-        ]
-    if 'tm2' in dataset_name or 'tickettalk' in dataset_name:
+    if 'tickettalk' in dataset_name:
         SECTION_IDS = [
             '[ USER ]',
             '[ ASSISTANT ]',
         ]
-    if 'wikihow' in dataset_name:
-        SECTION_IDS = [
-            '[ TITLE ]',
-            '[ METHOD ]',
-            '[ STEP ]'
-        ]
+
     SECTION_IDS += [' . ']
     if add_tokens:
         # NOTE loading previous tokenizer sometimes already includes the new tokens

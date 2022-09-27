@@ -17,7 +17,6 @@ import os
 import pickle
 import random
 import time
-import warnings
 from typing import Dict, List, Optional
 import copy
 
@@ -42,12 +41,6 @@ import constants
 logger = logging.get_logger(__name__)
 
 
-DEPRECATION_WARNING = (
-    "This dataset will be removed from the library soon, preprocessing should be handled with the 🤗 Datasets "
-    "library. You can have a look at this example script for pointers: {0}"
-)
-
-
 class TextDataset(Dataset):
     """
     This will be superseded by a framework-agnostic approach soon.
@@ -61,12 +54,7 @@ class TextDataset(Dataset):
         overwrite_cache=False,
         cache_dir: Optional[str] = None,
     ):
-        warnings.warn(
-            DEPRECATION_WARNING.format(
-                "https://github.com/huggingface/transformers/blob/master/examples/pytorch/language-modeling/run_mlm.py"
-            ),
-            FutureWarning,
-        )
+
         assert os.path.isfile(file_path), f"Input file path {file_path} not found"
 
         block_size = block_size - tokenizer.num_special_tokens_to_add(pair=False)
@@ -120,228 +108,6 @@ class TextDataset(Dataset):
     def __getitem__(self, i) -> torch.Tensor:
         return torch.tensor(self.examples[i], dtype=torch.long)
 
-
-class LineByLineTextDataset(Dataset):
-    """
-    This will be superseded by a framework-agnostic approach soon.
-    """
-
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int):
-        warnings.warn(
-            DEPRECATION_WARNING.format(
-                "https://github.com/huggingface/transformers/blob/master/examples/pytorch/language-modeling/run_mlm.py"
-            ),
-            FutureWarning,
-        )
-        assert os.path.isfile(file_path), f"Input file path {file_path} not found"
-        # Here, we do not cache the features, operating under the assumption
-        # that we will soon use fast multithreaded tokenizers from the
-        # `tokenizers` repo everywhere =)
-        logger.info(f"Creating features from dataset file at {file_path}")
-
-        with open(file_path, encoding="utf-8") as f:
-            lines = [line for line in f.read().splitlines() if (len(line) > 0 and not line.isspace())]
-
-        batch_encoding = tokenizer(lines, add_special_tokens=True, truncation=True, max_length=block_size)
-        self.examples = batch_encoding["input_ids"]
-        self.examples = [{"input_ids": torch.tensor(e, dtype=torch.long)} for e in self.examples]
-
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, i) -> Dict[str, torch.tensor]:
-        return self.examples[i]
-
-
-class LineByLineWithRefDataset(Dataset):
-    """
-    This will be superseded by a framework-agnostic approach soon.
-    """
-
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_path: str, block_size: int, ref_path: str):
-        warnings.warn(
-            DEPRECATION_WARNING.format(
-                "https://github.com/huggingface/transformers/blob/master/examples/pytorch/language-modeling/run_mlm_wwm.py"
-            ),
-            FutureWarning,
-        )
-        assert os.path.isfile(file_path), f"Input file path {file_path} not found"
-        assert os.path.isfile(ref_path), f"Ref file path {file_path} not found"
-        # Here, we do not cache the features, operating under the assumption
-        # that we will soon use fast multithreaded tokenizers from the
-        # `tokenizers` repo everywhere =)
-        logger.info(f"Creating features from dataset file at {file_path}")
-        logger.info(f"Use ref segment results at {ref_path}")
-        with open(file_path, encoding="utf-8") as f:
-            data = f.readlines()  # use this method to avoid delimiter '\u2029' to split a line
-        data = [line.strip() for line in data if len(line) > 0 and not line.isspace()]
-        # Get ref inf from file
-        with open(ref_path, encoding="utf-8") as f:
-            ref = [json.loads(line) for line in f.read().splitlines() if (len(line) > 0 and not line.isspace())]
-        assert len(data) == len(ref)
-
-        batch_encoding = tokenizer(data, add_special_tokens=True, truncation=True, max_length=block_size)
-        self.examples = batch_encoding["input_ids"]
-        self.examples = [{"input_ids": torch.tensor(e, dtype=torch.long)} for e in self.examples]
-
-        n = len(self.examples)
-        for i in range(n):
-            self.examples[i]["chinese_ref"] = torch.tensor(ref[i], dtype=torch.long)
-
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, i) -> Dict[str, torch.tensor]:
-        return self.examples[i]
-
-
-class LineByLineWithSOPTextDataset(Dataset):
-    """
-    Dataset for sentence order prediction task, prepare sentence pairs for SOP task
-    """
-
-    def __init__(self, tokenizer: PreTrainedTokenizer, file_dir: str, block_size: int):
-        warnings.warn(
-            DEPRECATION_WARNING.format(
-                "https://github.com/huggingface/transformers/blob/master/examples/pytorch/language-modeling/run_mlm.py"
-            ),
-            FutureWarning,
-        )
-        assert os.path.isdir(file_dir)
-        logger.info(f"Creating features from dataset file folder at {file_dir}")
-        self.examples = []
-        # TODO: randomness could apply a random seed, ex. rng = random.Random(random_seed)
-        # file path looks like ./dataset/wiki_1, ./dataset/wiki_2
-        for file_name in os.listdir(file_dir):
-            file_path = os.path.join(file_dir, file_name)
-            assert os.path.isfile(file_path)
-            article_open = False
-            with open(file_path, encoding="utf-8") as f:
-                original_lines = f.readlines()
-                article_lines = []
-                for line in original_lines:
-                    if "<doc id=" in line:
-                        article_open = True
-                    elif "</doc>" in line:
-                        article_open = False
-                        document = [
-                            tokenizer.convert_tokens_to_ids(tokenizer.tokenize(line))
-                            for line in article_lines[1:]
-                            if (len(line) > 0 and not line.isspace())
-                        ]
-
-                        examples = self.create_examples_from_document(document, block_size, tokenizer)
-                        self.examples.extend(examples)
-                        article_lines = []
-                    else:
-                        if article_open:
-                            article_lines.append(line)
-
-        logger.info("Dataset parse finished.")
-
-    def create_examples_from_document(self, document, block_size, tokenizer, short_seq_prob=0.1):
-        """Creates examples for a single document."""
-
-        # Account for special tokens
-        max_num_tokens = block_size - tokenizer.num_special_tokens_to_add(pair=True)
-
-        # We *usually* want to fill up the entire sequence since we are padding
-        # to `block_size` anyways, so short sequences are generally wasted
-        # computation. However, we *sometimes*
-        # (i.e., short_seq_prob == 0.1 == 10% of the time) want to use shorter
-        # sequences to minimize the mismatch between pretraining and fine-tuning.
-        # The `target_seq_length` is just a rough target however, whereas
-        # `block_size` is a hard limit.
-        target_seq_length = max_num_tokens
-        if random.random() < short_seq_prob:
-            target_seq_length = random.randint(2, max_num_tokens)
-
-        # We DON'T just concatenate all of the tokens from a document into a long
-        # sequence and choose an arbitrary split point because this would make the
-        # next sentence prediction task too easy. Instead, we split the input into
-        # segments "A" and "B" based on the actual "sentences" provided by the user
-        # input.
-        examples = []
-        current_chunk = []  # a buffer stored current working segments
-        current_length = 0
-        i = 0
-        while i < len(document):
-            segment = document[i]  # get a segment
-            if not segment:
-                i += 1
-                continue
-            current_chunk.append(segment)  # add a segment to current chunk
-            current_length += len(segment)  # overall token length
-            # if current length goes to the target length or reaches the end of file, start building token a and b
-            if i == len(document) - 1 or current_length >= target_seq_length:
-                if current_chunk:
-                    # `a_end` is how many segments from `current_chunk` go into the `A` (first) sentence.
-                    a_end = 1
-                    # if current chunk has more than 2 sentences, pick part of it `A` (first) sentence
-                    if len(current_chunk) >= 2:
-                        a_end = random.randint(1, len(current_chunk) - 1)
-                    # token a
-                    tokens_a = []
-                    for j in range(a_end):
-                        tokens_a.extend(current_chunk[j])
-
-                    # token b
-                    tokens_b = []
-                    for j in range(a_end, len(current_chunk)):
-                        tokens_b.extend(current_chunk[j])
-
-                    if len(tokens_a) == 0 or len(tokens_b) == 0:
-                        continue
-
-                    # switch tokens_a and tokens_b randomly
-                    if random.random() < 0.5:
-                        is_next = False
-                        tokens_a, tokens_b = tokens_b, tokens_a
-                    else:
-                        is_next = True
-
-                    def truncate_seq_pair(tokens_a, tokens_b, max_num_tokens):
-                        """Truncates a pair of sequences to a maximum sequence length."""
-                        while True:
-                            total_length = len(tokens_a) + len(tokens_b)
-                            if total_length <= max_num_tokens:
-                                break
-                            trunc_tokens = tokens_a if len(tokens_a) > len(tokens_b) else tokens_b
-                            assert len(trunc_tokens) >= 1
-                            # We want to sometimes truncate from the front and sometimes from the
-                            # back to add more randomness and avoid biases.
-                            if random.random() < 0.5:
-                                del trunc_tokens[0]
-                            else:
-                                trunc_tokens.pop()
-
-                    truncate_seq_pair(tokens_a, tokens_b, max_num_tokens)
-                    assert len(tokens_a) >= 1
-                    assert len(tokens_b) >= 1
-
-                    # add special tokens
-                    input_ids = tokenizer.build_inputs_with_special_tokens(tokens_a, tokens_b)
-                    # add token type ids, 0 for sentence a, 1 for sentence b
-                    token_type_ids = tokenizer.create_token_type_ids_from_sequences(tokens_a, tokens_b)
-
-                    example = {
-                        "input_ids": torch.tensor(input_ids, dtype=torch.long),
-                        "token_type_ids": torch.tensor(token_type_ids, dtype=torch.long),
-                        "sentence_order_label": torch.tensor(0 if is_next else 1, dtype=torch.long),
-                    }
-                    examples.append(example)
-                current_chunk = []  # clear current chunk
-                current_length = 0  # reset current text length
-            i += 1  # go to next line
-        return examples
-
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, i) -> Dict[str, torch.tensor]:
-        return self.examples[i]
-
-
 class TextDatasetForNextSentencePrediction(Dataset):
     """
     This will be superseded by a framework-agnostic approach soon.
@@ -356,12 +122,7 @@ class TextDatasetForNextSentencePrediction(Dataset):
         short_seq_probability=0.1,
         nsp_probability=0.5,
     ):
-        warnings.warn(
-            DEPRECATION_WARNING.format(
-                "https://github.com/huggingface/transformers/blob/master/examples/pytorch/language-modeling/run_mlm.py"
-            ),
-            FutureWarning,
-        )
+
         assert os.path.isfile(file_path), f"Input file path {file_path} not found"
 
         self.short_seq_probability = short_seq_probability
@@ -770,147 +531,6 @@ class WikisectionDataset(TextDataset):
                 self.cl_texts[i]
                 )
 
-class StoriesDataset(TextDataset):
-    """
-    ROC STORIES
-    """
-
-    def __init__(self,
-                 tokenizer: PreTrainedTokenizer,
-                 file_path: str,
-                 block_size: int,
-                 special_words: list,
-                 cl_model,
-                 overwrite_cache=False,
-                 cache_dir: Optional[str] = None,
-                 ):
-        fpath = os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.train.txt")
-        super(StoriesDataset, self).__init__(
-                 tokenizer=tokenizer,
-                 file_path=fpath,
-                 block_size=block_size,
-                 overwrite_cache=overwrite_cache,
-                 cache_dir=cache_dir,
-        )
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.cpu_device = torch.device('cpu')
-        self.cl_model = cl_model
-        self.file_path = file_path
-        self.tokenizer = tokenizer
-        self.block_size = block_size
-
-        self.examples = []
-        self.raw_texts = []
-        self.cl_texts = []
-        self.section_ids = []
-        self.cl_embeddings = []
-        self.special_words = special_words
-        self.cl_offset=0
-
-        import sys
-        sys.path.append("/nlp/scr/rewang/ilm")
-        import ilm
-        self.cl_eos_str = self.special_words[-1]
-        assert self.cl_eos_str == ' . '
-        self.cl_eos_id = self.tokenizer(self.cl_eos_str)['input_ids'][0]
-        assert self.cl_eos_id > 50000 # just checking its a new token
-        self.set_cl_tokenizer()
-        start = time.time()
-        self.process_dataset()
-        end = time.time()
-        print("Processing dataset took {}".format(end-start))
-
-    def set_cl_tokenizer(self):
-        self.cl_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-        self.cl_tokenizer.pad_token = self.cl_tokenizer.eos_token
-
-        self.cl_tokenizer.add_tokens(self.special_words)
-
-    def cl_tokenize(self, text, device):
-        output = self.cl_tokenizer(
-            text,
-            padding=True,
-            return_tensors='pt',
-        )
-        input_ids = output['input_ids'].squeeze(0)
-        attention_mask = output['attention_mask'].squeeze(0)
-        eos_input_ids = torch.tensor([[self.cl_tokenizer.eos_token_id]*input_ids.shape[0]])
-        eos_attention = torch.tensor([[0]*input_ids.shape[0]])
-        input_ids = torch.cat((input_ids, eos_input_ids.T), dim=1)
-        attention_mask = torch.cat((attention_mask, eos_attention.T), dim=1)
-        return input_ids.to(device), attention_mask.to(device)
-
-    def process_dataset(self):
-        data = pickle.load(open(self.file_path, "rb"))
-        split_pattern = ". "
-        for example in tqdm(data):
-            story = example[0]
-            title, text = story.split('\n')
-            text = text.split(split_pattern)
-            story = [title] + text
-            if len(story) <= 3:
-                continue
-            row  = self.cl_eos_str.join(story)
-            row = f"{self.tokenizer.bos_token} {row} {self.tokenizer.eos_token}"
-            tokenized_text = self.tokenizer.convert_tokens_to_ids(
-                self.tokenizer.tokenize(row))
-
-            if len(tokenized_text) >= self.block_size:
-                pass
-                # skip / filter large exmaples
-            else:
-                example = self.tokenizer.build_inputs_with_special_tokens(tokenized_text)
-                self.examples.append(example)
-                self.section_ids.append([0])
-                self.raw_texts.append(self.tokenizer.decode(self.examples[-1]))
-                self.cl_texts.append(row)
-                self.get_cl_embeddings(tokenized_example=example,
-                                        gpt2_text=row,
-                                        raw_text=self.raw_texts[-1],
-                                        cl_text=self.cl_texts[-1])
-
-        self.labels = copy.deepcopy(self.examples)
-        print("examples")
-        print(self.cl_texts[0])
-        print(self.cl_texts[-1])
-
-    def get_end_points(self, tokenized_example):
-        eos_idxs = [i-1 for i, x in enumerate(tokenized_example) if x == self.cl_eos_id]
-        eos_idxs += [len(tokenized_example)]
-        return eos_idxs
-
-    def get_cl_embeddings(self, tokenized_example, gpt2_text, raw_text, cl_text):
-        split_pattern = self.cl_eos_str
-        cl_embeddings = []
-        eos_idxs = self.get_end_points(tokenized_example)
-        split_sentences = gpt2_text.split(split_pattern)
-        split_sentences = [_ + split_pattern for _ in split_sentences[:-1]] + [split_sentences[-1]]
-        assert len(eos_idxs) == len(split_sentences)
-        cl_input_ids, cl_attention_mask = self.cl_tokenize(split_sentences, self.device)
-        cl_feats = self.cl_model.forward(input_ids=cl_input_ids, attention_mask=cl_attention_mask) # 1, feat_size
-        # Align feats to the sentence length
-        last_idx = 0
-        for eos_idx, feat in zip(eos_idxs, cl_feats):
-            cl_embeddings += [feat] * (eos_idx - last_idx)
-            last_idx = eos_idx
-        assert len(cl_embeddings) == len(tokenized_example)
-
-        if self.cl_offset:
-            cl_embeddings = cl_embeddings[self.cl_offset:] + [cl_embeddings[-1]] * self.cl_offset
-
-        self.cl_embeddings.append(cl_embeddings)
-
-    def __len__(self):
-        return len(self.examples)
-
-    def __getitem__(self, i):
-        return (torch.tensor(self.examples[i], dtype=torch.long),
-                torch.tensor(self.labels[i], dtype=torch.long),
-                torch.tensor(self.section_ids[i], dtype=torch.long),
-                torch.stack(self.cl_embeddings[i]).to(self.cpu_device),
-                self.cl_texts[i]
-                )
-
 class RecipeDataset(TextDataset):
     """
     This will be superseded by a framework-agnostic approach
@@ -1169,24 +789,12 @@ class TaskmasterDataset(RecipeDataset):
         )
 
     def _set_indices(self):
-        if "tm2" in self.name:
-            print('LOADING RESTAURANT TM')
-            self.data_dir = constants.PATH2TM2
-            if self.train:
-                self.data_files = ['restaurant-search.json'] # 3276 conversations
-                self.start_conversation = 0
-                self.end_conversation = 2000
-            else:
-                self.data_files = ['restaurant-search.json']
-                self.start_conversation = 2000
-                self.end_conversation = 3276
+        print('LOADING MOVIE TM')
+        self.data_dir = constants.PATH2TICKETTALK
+        if self.train:
+            self.data_files = ['data_0{}.json'.format(i) for i in range(0, 3)]
         else:
-            print('LOADING MOVIE TM')
-            self.data_dir = constants.PATH2TICKETTALK
-            if self.train:
-                self.data_files = ['data_0{}.json'.format(i) for i in range(0, 3)]
-            else:
-                self.data_files = ['data_{}.json'.format(i) for i in range(13, 14)]
+            self.data_files = ['data_{}.json'.format(i) for i in range(13, 14)]
 
     def _process_dataset(self):
         num_filtered = 0
@@ -1252,131 +860,6 @@ class TaskmasterDataset(RecipeDataset):
         cl_input_ids, cl_attention_mask = self.cl_tokenize(cl_text, self.device)
         cl_feats = self.cl_model.forward(
             input_ids=cl_input_ids, attention_mask=cl_attention_mask) # 1, feat_size
-        # Align feats to the sentence length
-        last_idx = 0
-        for eos_idx, feat in zip(eos_idxs, cl_feats):
-            cl_embeddings += [feat] * (eos_idx - last_idx)
-            last_idx = eos_idx
-
-        assert len(cl_embeddings) == len(tokenized_example)
-
-        if self.cl_offset:
-            cl_embeddings = cl_embeddings[self.cl_offset:] + [cl_embeddings[-1]] * self.cl_offset
-        self.cl_embeddings.append(cl_embeddings)
-
-
-class WikihowDataset(RecipeDataset):
-    """
-    This will be superseded by a framework-agnostic approach
-    soon.
-    """
-
-    def __init__(self,
-                 cl_model,
-                 tokenizer: PreTrainedTokenizer,
-                 file_path: str,
-                 block_size: int,
-                 use_section_null: bool,
-                 special_words:list,
-                 data_dir=os.path.join(constants.PATH2RECIPENLG, 'dataset'),
-                 overwrite_cache=False,
-                 cache_dir: Optional[str] = None,
-                 name: str = 'wikihow'
-                 ):
-        super(WikihowDataset, self).__init__(
-            cl_model,
-                 tokenizer=tokenizer,
-                 file_path=file_path,
-                 block_size=block_size,
-                 use_section_null=use_section_null,
-                 special_words=special_words,
-                 data_dir=os.path.join(constants.PATH2RECIPENLG, 'dataset'),
-                 overwrite_cache=False,
-                 cache_dir=cache_dir,
-                name=name
-        )
-
-    def _set_indices(self):
-        # SEE REPO <NONSTATIONARITY> FOR INDEXES
-        if self.train:
-            self.start_idx, self.end_idx = 0, 700
-        else:
-            self.start_idx, self.end_idx = 40_000, 40_100
-
-    def _process_dataset(self):
-        self.data_name ="/nlp/scr/rewang/data/wiki_how_data.pkl"
-        with open(self.data_name, 'rb') as f:
-            self.all_dataset = pickle.load(f)
-
-        num_filtered = 0
-
-        self.processed_data = []
-        split_pattern = ".  "
-        doc_counter = 0
-        for doc_id in tqdm(range(self.start_idx, self.end_idx)):
-            doc = self.all_dataset[doc_id]
-            method2steps = defaultdict(list)
-            # Wikihow has k different methods
-            for _, v in doc['steps'].items():
-                # section = one of the how-to methods
-                method2steps[v['section']].append(v)
-
-            for method_name, steps in method2steps.items():
-                doc_info = []
-                sentence_counter = 0
-                # Put all the document sentences together.
-                gpt2_text = [self.special_words[0] + " " + doc['title'] + " . "]
-                gpt2_text += [self.special_words[1] + " " +  method_name + " . "]
-                for step_num, step in enumerate(steps):
-                    gpt2_directions = [ f"{self.special_words[2]} {step_num} "
-                                  + step['summary'][:-1] + " . "]
-                    sentences = [_ + " . " for _ in step['text'].split(split_pattern)]
-                    if sentences[-1].endswith(". . "):
-                        sentences[-1] = sentences[-1].replace('. . ', ' . ')
-                    gpt2_text += gpt2_directions + sentences
-
-                # removing any empty sentences
-                gpt2_list = [s for s in gpt2_text if s]
-                gpt2_text = "".join(gpt2_list)
-
-                row = f"{self.tokenizer.bos_token} {gpt2_text} {self.tokenizer.eos_token}"
-                tokenized_text = self.tokenizer.convert_tokens_to_ids(
-                    self.tokenizer.tokenize(row))
-                if len(tokenized_text) >= self.block_size:
-                    num_filtered+=1
-                else:
-                    example = self.tokenizer.build_inputs_with_special_tokens(tokenized_text)
-                    self.examples.append(example)
-                    self.cl_texts.append(gpt2_text)
-                    section_ids, _ = self._determine_section_ids(tokenized_text, last_section_id=None)
-                    self.lengths['per [ STEP ]'].append(
-                        self.lengths['[ STEP ]'][-1]/(tokenized_text.count(50259)))
-                    self.get_cl_embeddings(tokenized_example=example, raw_text=gpt2_text, cl_text=gpt2_list, gpt2_text=row)
-
-                    self.section_ids.append(section_ids)
-                    self.raw_texts.append(row)
-
-        self.labels = copy.deepcopy(self.examples)
-        print("num examples {}".format(len(self.examples)))
-        print(f"num filtered {num_filtered}")
-        print("Lengths")
-        for k, v in self.lengths.items():
-            print("[ {} ] {}+-{}".format(k, np.mean(v), np.std(v) ))
-
-    def get_end_points(self, tokenized_example):
-        eos_idxs = [i-1 for i, x in enumerate(tokenized_example) if x == self.cl_eos_id]
-        eos_idxs += [len(tokenized_example)]
-        return eos_idxs
-
-    def get_cl_embeddings(self, tokenized_example, raw_text, cl_text, gpt2_text):
-        split_pattern = " . "
-        cl_embeddings = []
-        eos_idxs = self.get_end_points(tokenized_example)
-        split_sentences = gpt2_text.split(split_pattern)
-        split_sentences = [_ + split_pattern for _ in split_sentences[:-1]] + [split_sentences[-1]]
-        assert len(eos_idxs) == len(split_sentences)
-        cl_input_ids, cl_attention_mask = self.cl_tokenize(split_sentences, self.device)
-        cl_feats = self.cl_model.forward(input_ids=cl_input_ids, attention_mask=cl_attention_mask) # 1, feat_size
         # Align feats to the sentence length
         last_idx = 0
         for eos_idx, feat in zip(eos_idxs, cl_feats):
