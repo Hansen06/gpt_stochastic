@@ -61,30 +61,32 @@ class BrownianBridgeSystem(pl.LightningModule):
             finetune_gpt2=False)
 
         self.model.model.resize_token_embeddings(len(self.train_dataset.tokenizer))
-        state_dict = torch.load('')
-        new_dict = {}
-        for k, v in state_dict['state_dict'].items():
-            if any([i in k for i in ['model.model.g_ar', 'model.model.W_k']]):
-                new_dict[k[6:]] = v
-            elif any([i in k for i in ['model.g_ar', 'model.W_k', 'time_model']]):
-                continue
-            elif "model." in k:
-                new_dict[k[6:]] = v
-            else:
-                new_dict[k] = v
 
-        if any(['g_ar' in k for k in new_dict.keys()]):
-            self.model.g_ar = nn.GRU(input_size=self.config.model_params.latent_dim,
-                                hidden_size=2400,  # default number in infoNCE for langauge
-                                num_layers=3,
-                                batch_first=True
-                                )
-            self.model.W_k = nn.Linear(2400, self.config.model_params.latent_dim)
-        elif any(['time_model' in k for k in state_dict['state_dict'].keys()]):
-            self.model.fc_mu = nn.Linear(self.config.model_params.latent_dim, self.config.model_params.latent_dim)
-            self.model.fc_var = nn.Linear(self.config.model_params.latent_dim, self.config.model_params.latent_dim)
-
-        self.model.load_state_dict(new_dict)
+        # 如果训练中断，打开此代码加载训练好的模型进行继续训练
+        # state_dict = torch.load('模型路径')
+        # new_dict = {}
+        # for k, v in state_dict['state_dict'].items():
+        #     if any([i in k for i in ['model.model.g_ar', 'model.model.W_k']]):
+        #         new_dict[k[6:]] = v
+        #     elif any([i in k for i in ['model.g_ar', 'model.W_k', 'time_model']]):
+        #         continue
+        #     elif "model." in k:
+        #         new_dict[k[6:]] = v
+        #     else:
+        #         new_dict[k] = v
+        #
+        # if any(['g_ar' in k for k in new_dict.keys()]):
+        #     self.model.g_ar = nn.GRU(input_size=self.config.model_params.latent_dim,
+        #                         hidden_size=2400,  # default number in infoNCE for langauge
+        #                         num_layers=3,
+        #                         batch_first=True
+        #                         )
+        #     self.model.W_k = nn.Linear(2400, self.config.model_params.latent_dim)
+        # elif any(['time_model' in k for k in state_dict['state_dict'].keys()]):
+        #     self.model.fc_mu = nn.Linear(self.config.model_params.latent_dim, self.config.model_params.latent_dim)
+        #     self.model.fc_var = nn.Linear(self.config.model_params.latent_dim, self.config.model_params.latent_dim)
+        #
+        # self.model.load_state_dict(new_dict)
 
         for p in self.model.model.parameters():
             p.requires_grad = False

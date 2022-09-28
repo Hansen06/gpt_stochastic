@@ -284,17 +284,22 @@ def get_data_collator(
 
 HIDDEN_DIM = 128
 
-def load_cl_model(filepath, latent_dim, base_model, use_section_ids,
-                  token_size):
+def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
+                   use_section_ids=False, token_size=None,
+                   filepath=None):
+    '''
+    加载布朗模型
+    '''
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     model = language.GPT2OUEncoder(
-         hidden_dim=HIDDEN_DIM,
-         latent_dim=latent_dim,
-         finetune_gpt2=False)
+        hidden_dim=HIDDEN_DIM,
+        latent_dim=latent_dim,
+        finetune_gpt2=False)
     if use_section_ids:
         model.model.resize_token_embeddings(token_size)
 
-    transformers.__spec__ = 'gpt2' # Avoid bug
+    transformers.__spec__ = 'gpt2'  # Avoid bug
     state_dict = torch.load(filepath)
     new_dict = {}
     for k, v in state_dict['state_dict'].items():
@@ -309,10 +314,10 @@ def load_cl_model(filepath, latent_dim, base_model, use_section_ids,
 
     if any(['g_ar' in k for k in new_dict.keys()]):
         model.g_ar = nn.GRU(input_size=latent_dim,
-                           hidden_size=2400, # default number in infoNCE for langauge
-                           num_layers=3,
-                           batch_first=True
-                           )
+                            hidden_size=2400,  # default number in infoNCE for langauge
+                            num_layers=3,
+                            batch_first=True
+                            )
         model.W_k = nn.Linear(2400, latent_dim)
     elif any(['time_model' in k for k in state_dict['state_dict'].keys()]):
         model.fc_mu = nn.Linear(latent_dim, latent_dim)
@@ -321,22 +326,7 @@ def load_cl_model(filepath, latent_dim, base_model, use_section_ids,
     model.load_state_dict(new_dict)
     for p in model.parameters():
         p.requires_grad = False
-    model.eval()
-    return model
 
-def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
-                   sec_id=False, token_size=None,
-                   filepath=None):
-    '''
-    加载布朗模型
-    '''
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    model = load_cl_model(filepath,
-                          latent_dim,
-                          base_model,
-                          use_section_ids=sec_id,
-                          token_size=token_size
-                          )
     model.to(device)
     model = model.eval()
     return model
@@ -494,7 +484,7 @@ def main():
     CL_MODEL = get_checkpoint(
         dataset_name=data_args.dataset_name,
         latent_dim=model_args.latent_dim,
-        sec_id=True,
+        use_section_ids=True,
         token_size= len(tokenizer),
         base_model=base_model,
         filepath=model_args.encoder_filepath
