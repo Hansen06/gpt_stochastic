@@ -693,4 +693,120 @@ class TaskmasterDataset(RecipeDataset):
         if self.cl_offset:
             cl_embeddings = cl_embeddings[self.cl_offset:] + [cl_embeddings[-1]] * self.cl_offset
         self.cl_embeddings.append(cl_embeddings)
+class EekeDataset(RecipeDataset):
+    """
+    This will be superseded by a framework-agnostic approach
+    soon.
+    """
+
+    def __init__(self,
+                 cl_model,
+                 tokenizer: PreTrainedTokenizer,
+                 file_path: str,
+                 block_size: int,
+                 use_section_null: bool,
+                 special_words:list,
+                 data_dir=os.path.join(constants.PATH2RECIPENLG, 'dataset'),
+                 overwrite_cache=False,
+                 cache_dir: Optional[str] = None,
+                 name: str = 'wikihow'
+                 ):
+        self.name = name
+        self.train = True if 'train' in file_path else False
+        super(TaskmasterDataset, self).__init__(
+                cl_model=cl_model,
+                 tokenizer=tokenizer,
+                 file_path=file_path,
+                 block_size=block_size,
+                 use_section_null=use_section_null,
+                 special_words=special_words,
+                 data_dir=os.path.join(constants.PATH2RECIPENLG, 'dataset'),
+                 overwrite_cache=False,
+                 cache_dir=cache_dir,
+                name=name
+        )
+
+    def _set_indices(self):
+        print('LOADING MOVIE TM')
+        self.data_dir = constants.PATH2TICKETTALK
+        if self.train:
+            self.data_files = ['data_0{}.json'.format(i) for i in range(0, 3)]
+        else:
+            self.data_files = ['data_{}.json'.format(i) for i in range(13, 14)]
+
+    def _process_dataset(self):
+        num_filtered = 0
+
+        self.processed_data = []
+        split_pattern = ".  "
+        doc_counter = 0
+        # self.lengths = defaultdict(lambda: [])
+        for fname in self.data_files:
+            data = json.load(open(os.path.join(self.data_dir, fname), 'rb'))
+            if "restaurant" in self.name:
+                data = data[self.start_conversation:self.end_conversation]
+            for conversation in data:
+                full_text = ""
+                cl_text = []
+                for sentence_counter, utterance in enumerate(conversation['utterances']):
+                    text = "[ {} ] {}".format(utterance['speaker'].upper(), utterance['text'])
+                    full_text += text + " "
+                    cl_text.append(text)
+                row = f"{self.tokenizer.bos_token} {full_text} {self.tokenizer.eos_token}"
+                tokenized_text = self.tokenizer.convert_tokens_to_ids(
+                    self.tokenizer.tokenize(row))
+                if len(tokenized_text) >= self.block_size:
+                    num_filtered+=1
+                else:
+                    example = self.tokenizer.build_inputs_with_special_tokens(tokenized_text)
+                    self.examples.append(example)
+                    self.cl_texts.append(full_text)
+                    section_ids = [0]
+                    self.get_cl_embeddings(example, full_text, cl_text, gpt2_text=row)
+                    self.section_ids.append(section_ids)
+                    self.raw_texts.append(row)
+            if len(self.examples) > 1240:
+                break
+
+        self.labels = copy.deepcopy(self.examples)
+        print("num examples {}".format(len(self.examples)))
+        print(f"num filtered {num_filtered}")
+        print("Lengths")
+        for k, v in self.lengths.items():
+            print("[ {} ] {}+-{}".format(k, np.mean(v), np.std(v)/np.sqrt(len(v))))
+
+        print("examples")
+        print(self.raw_texts[0])
+        print(self.raw_texts[-1])
+
+    def get_end_points(self, tokenized_example):
+        eos_idxs = []
+        for tok in self.special_tokens[:2]:
+            eos_idxs += [i-1 for i, x in enumerate(tokenized_example) if x == tok]
+        eos_idxs += [len(tokenized_example)]
+        eos_idxs.sort()
+        eos_idxs = eos_idxs[1:]
+        return eos_idxs
+
+    def get_cl_embeddings(self, tokenized_example, raw_text, cl_text, gpt2_text):
+
+        cl_embeddings = []
+        eos_idxs = self.get_end_points(tokenized_example)
+
+        assert len(eos_idxs) == len(cl_text)
+
+        cl_input_ids, cl_attention_mask = self.cl_tokenize(cl_text, self.device)
+        cl_feats = self.cl_model.forward(
+            input_ids=cl_input_ids, attention_mask=cl_attention_mask) # 1, feat_size
+        # Align feats to the sentence length
+        last_idx = 0
+        for eos_idx, feat in zip(eos_idxs, cl_feats):
+            cl_embeddings += [feat] * (eos_idx - last_idx)
+            last_idx = eos_idx
+
+        assert len(cl_embeddings) == len(tokenized_example)
+
+        if self.cl_offset:
+            cl_embeddings = cl_embeddings[self.cl_offset:] + [cl_embeddings[-1]] * self.cl_offset
+        self.cl_embeddings.append(cl_embeddings)
 

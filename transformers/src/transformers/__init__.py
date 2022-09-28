@@ -455,18 +455,12 @@ if is_torch_available():
     _import_structure["data.datasets"] = [
         "GlueDataset",
         "GlueDataTrainingArguments",
-        "LineByLineTextDataset",
-        "LineByLineWithRefDataset",
-        "LineByLineWithSOPTextDataset",
         "SquadDataset",
         "SquadDataTrainingArguments",
         "TextDataset",
-        "TextDatasetForNextSentencePrediction",
         "WikisectionDataset",
-        "StoriesDataset",
-        "RecipeDataset",
+        "EekeDataset",
         "TaskmasterDataset",
-        "WikihowDataset",
     ]
     _import_structure["generation_beam_search"] = ["BeamScorer", "BeamSearchScorer"]
     _import_structure["generation_logits_process"] = [
@@ -1981,18 +1975,12 @@ if TYPE_CHECKING:
         from .data.datasets import (
             GlueDataset,
             GlueDataTrainingArguments,
-            LineByLineTextDataset,
-            LineByLineWithRefDataset,
-            LineByLineWithSOPTextDataset,
             SquadDataset,
             SquadDataTrainingArguments,
             TextDataset,
-            TextDatasetForNextSentencePrediction,
             WikisectionDataset,
-            StoriesDataset,
-            RecipeDataset,
+            EekeDataset,
             TaskmasterDataset,
-            WikihowDataset,
         )
 
         from .generation_beam_search import BeamScorer, BeamSearchScorer

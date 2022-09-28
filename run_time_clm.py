@@ -30,7 +30,7 @@ from transformers.src.transformers import (
     PreTrainedTokenizer,
     DataCollatorForTimeControl,
     WikisectionDataset,
-    RecipeDataset,
+    EekeDataset,
     TaskmasterDataset,
     GPT2TimeLMHeadModel,
 )
