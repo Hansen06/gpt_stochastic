@@ -19,6 +19,7 @@ NAME2DATASET = {
 
 from model import language
 from model import brownian_bridge
+import torch.nn as nn
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -38,8 +39,55 @@ class BrownianBridgeSystem(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self._set_dataset()
-        self._set_language_encoder()
+        self.all_dataset = None
+
+        dataset = NAME2DATASET[self.config.data_params.name]
+        self.train_dataset = dataset(
+            train=True,
+            seed=self.config.data_params.data_seed,
+            all_dataset=self.all_dataset,
+            config=self.config
+        )
+        self.test_dataset = dataset(
+            train=False,
+            seed=self.config.data_params.data_seed,
+            all_dataset=self.all_dataset,
+            config=self.config
+        )
+
+        self.model = language.GPT2OUEncoder(
+            hidden_dim=self.config.model_params.hidden_size,
+            latent_dim=self.config.model_params.latent_dim,
+            finetune_gpt2=False)
+
+        self.model.model.resize_token_embeddings(len(self.train_dataset.tokenizer))
+        state_dict = torch.load('')
+        new_dict = {}
+        for k, v in state_dict['state_dict'].items():
+            if any([i in k for i in ['model.model.g_ar', 'model.model.W_k']]):
+                new_dict[k[6:]] = v
+            elif any([i in k for i in ['model.g_ar', 'model.W_k', 'time_model']]):
+                continue
+            elif "model." in k:
+                new_dict[k[6:]] = v
+            else:
+                new_dict[k] = v
+
+        if any(['g_ar' in k for k in new_dict.keys()]):
+            self.model.g_ar = nn.GRU(input_size=self.config.model_params.latent_dim,
+                                hidden_size=2400,  # default number in infoNCE for langauge
+                                num_layers=3,
+                                batch_first=True
+                                )
+            self.model.W_k = nn.Linear(2400, self.config.model_params.latent_dim)
+        elif any(['time_model' in k for k in state_dict['state_dict'].keys()]):
+            self.model.fc_mu = nn.Linear(self.config.model_params.latent_dim, self.config.model_params.latent_dim)
+            self.model.fc_var = nn.Linear(self.config.model_params.latent_dim, self.config.model_params.latent_dim)
+
+        self.model.load_state_dict(new_dict)
+
+        for p in self.model.model.parameters():
+            p.requires_grad = False
 
         wandb.init()
 
@@ -56,44 +104,8 @@ class BrownianBridgeSystem(pl.LightningModule):
     def test_dataloader(self):
         return create_dataloader(self.test_dataset, self.config, shuffle=False)
 
-    def _set_dataset(self):
-        dname = self.config.data_params.name
-        if 'recipe' == dname:
-            self.data_dir = constants.PATH2RECIPENLG
-            self.all_dataset = my_datasets.load_dataset("recipe_nlg", data_dir=self.data_dir)['train']
-        elif 'wikihow' == dname:
-            self.data_name = constants.PATH2WIKIHOW
-            with open(self.data_name, 'rb') as f:
-                self.all_dataset = pickle.load(f)
-        else:
-            self.all_dataset = None
-
-        dataset = NAME2DATASET[dname]
-        self.train_dataset = dataset(
-            train=True,
-            seed=self.config.data_params.data_seed,
-            all_dataset=self.all_dataset,
-            config=self.config
-        )
-        self.test_dataset = dataset(
-            train=False,
-            seed=self.config.data_params.data_seed,
-            all_dataset=self.all_dataset,
-            config=self.config
-        )
-
     def set_to_train(self):
         pass
-
-    def _set_language_encoder(self):
-        self.model = language.GPT2OUEncoder(
-            hidden_dim=self.config.model_params.hidden_size,
-            latent_dim=self.config.model_params.latent_dim,
-            finetune_gpt2=False)
-
-        self.model.model.resize_token_embeddings(len(self.train_dataset.tokenizer))
-        for p in self.model.model.parameters():
-            p.requires_grad = False
 
     def forward(self, input_ids, attention_mask):
         feats = self.model.forward(input_ids=input_ids, attention_mask=attention_mask)

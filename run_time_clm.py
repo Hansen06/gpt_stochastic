@@ -327,6 +327,9 @@ def load_cl_model(filepath, latent_dim, base_model, use_section_ids,
 def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
                    sec_id=False, token_size=None,
                    filepath=None):
+    '''
+    加载布朗模型
+    '''
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = load_cl_model(filepath,
                           latent_dim,
