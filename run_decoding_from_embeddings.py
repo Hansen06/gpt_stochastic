@@ -13,7 +13,7 @@ import wandb
 import numpy as np
 import torch
 import tqdm
-
+import constants
 
 from transformers.src.transformers import (
     GPT2TimeLMHeadModel,
@@ -204,7 +204,7 @@ def main():
     CL_MODEL = get_checkpoint(
         dataset_name=args.dataset_name,
         latent_dim=args.latent_dim,
-        sec_id=True,
+        use_section_ids=True,
         token_size=len(tokenizer),
         base_model=base_model,
         filepath=args.encoder_filepath
@@ -251,7 +251,7 @@ def main():
 
     # Data
     assert args.dataset_name
-    from stochastic.src import constants
+
     print(f'Args: {args}')
     train_path, _, eval_path = get_data_paths(args)
     train_dataset = get_dataset(
@@ -369,7 +369,8 @@ def main():
 
         # wandb.log({"diff_feats": (bridge_feats-true_cl_feats).sum()/bridge_feats.shape[0]})
 
-        trackers = [gt_cl_tracker, bridge_cl_tracker,
+        trackers = [gt_cl_tracker, 
+                    bridge_cl_tracker,
                     # random_cl_tracker
                     ]
 

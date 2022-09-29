@@ -693,6 +693,8 @@ class TaskmasterDataset(RecipeDataset):
         if self.cl_offset:
             cl_embeddings = cl_embeddings[self.cl_offset:] + [cl_embeddings[-1]] * self.cl_offset
         self.cl_embeddings.append(cl_embeddings)
+
+
 class EekeDataset(RecipeDataset):
     """
     This will be superseded by a framework-agnostic approach

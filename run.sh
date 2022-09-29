@@ -23,3 +23,22 @@ python run_time_clm.py
   --evaluation_strategy=steps
   --eval_steps=1000
   --use_contrastive_embeddings
+
+
+
+
+python run_decoding_from_embeddings.py
+  --model_type=gpt2
+  --model_name_or_path=/examples/pytorch/language-modeling/
+  --prompt="<|endoftext|>"
+  --num_return_sequences=1
+  --num_intervals=1000
+  --method=sample
+  --stop_token="<|endoftext|>"
+  --dataset_name=tickettalk
+  --encoder_filepath=/epoch=99-step=75299.ckpt
+  --latent_dim=32
+  --project=tickettalk
+  --no_eos
+  --label=tickettalk
+  --seed=0
