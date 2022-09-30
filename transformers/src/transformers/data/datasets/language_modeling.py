@@ -549,7 +549,7 @@ class EekeDataset(TextDataset):
                  cache_dir: Optional[str] = None,
                  name: str = 'wikihow'
                  ):
-        super(TaskmasterDataset, self).__init__(
+        super(EekeDataset, self).__init__(
                 tokenizer=tokenizer,
                  file_path=file_path,
                  block_size=block_size,
