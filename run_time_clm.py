@@ -461,6 +461,7 @@ def main():
     # tokenizer = GPT2Tokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
     tokenizer = BertTokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
     tokenizer.eos_token = '[SEP]'
+    tokenizer.bos_token = '[SEP]'
     tokenizer.pad_token = tokenizer.eos_token
 
     SECTION_IDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(

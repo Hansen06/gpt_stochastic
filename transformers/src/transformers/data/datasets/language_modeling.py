@@ -563,7 +563,7 @@ class EekeDataset(TextDataset):
         self.lengths = defaultdict(lambda: [])
         self.special_words = special_words
         assert self.special_words  # should not be emtpy
-        self.special_tokens = [_[0] for _ in tokenizer(self.special_words)['input_ids']]
+        self.special_tokens = [_[1] for _ in tokenizer(self.special_words)['input_ids']]
         self.file_path = file_path
         self.data_dir = data_dir
         self.train = 'train' in self.file_path
@@ -576,11 +576,6 @@ class EekeDataset(TextDataset):
         else:
             self.data_files = ['valid-.json']
 
-        # self.cl_tokenizer = GPT2Tokenizer.from_pretrained(constants.PATH2GPT)
-        self.cl_tokenizer = BertTokenizer.from_pretrained(constants.PATH2GPT)
-        self.cl_tokenizer.pad_token = self.cl_tokenizer.eos_token
-        self.cl_tokenizer.add_tokens(self.special_words)
-
         self.use_section_null = use_section_null
         self.tokenizer = tokenizer
         self.examples = []
@@ -589,29 +584,17 @@ class EekeDataset(TextDataset):
         self.section_ids = []
         self.raw_texts = []
 
-        # string form of id's
-        self.special_words = special_words
-        self.section_names = self.special_words[:-1]
-        self.cl_eos_str = self.special_words[-1]
-        assert self.cl_eos_str == ' . '
-        # id token
-        section_tokens = self.tokenizer(self.section_names)['input_ids']
-        self.section_tokens = [tok[0] for tok in section_tokens]
-        self.cl_eos_id = self.tokenizer(self.cl_eos_str)['input_ids'][1]
-        print('========self.cl_eos_id {}========'.format(self.cl_eos_id))
-        assert self.cl_eos_id > 20000  # just checking its a new token
-
         self._process_dataset()
 
     def cl_tokenize(self, text, device):
-        output = self.cl_tokenizer(
+        output = self.tokenizer(
             text,
             padding=True,
             return_tensors='pt',
         )
         input_ids = output['input_ids'].squeeze(0)
         attention_mask = output['attention_mask'].squeeze(0)
-        eos_input_ids = torch.tensor([[self.cl_tokenizer.eos_token_id]*input_ids.shape[0]])
+        eos_input_ids = torch.tensor([[self.tokenizer.eos_token_id]*input_ids.shape[0]])
         eos_attention = torch.tensor([[0]*input_ids.shape[0]])
         input_ids = torch.cat((input_ids, eos_input_ids.T), dim=1)
         attention_mask = torch.cat((attention_mask, eos_attention.T), dim=1)
@@ -676,6 +659,9 @@ class EekeDataset(TextDataset):
 
         cl_embeddings = []
         eos_idxs = self.get_end_points(tokenized_example)
+
+        print('=======len eos_idxs :{}============'.format(len(eos_idxs)))
+        print('=======len cl_text :{}============'.format(len(cl_text)))
 
         assert len(eos_idxs) == len(cl_text)
 
