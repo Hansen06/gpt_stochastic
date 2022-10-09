@@ -18,6 +18,7 @@ import constants
 from transformers.src.transformers import (
     GPT2TimeLMHeadModel,
     GPT2Tokenizer,
+    BertTokenizer
 )
 
 from generation_metrics import GenerationMetrics
@@ -37,7 +38,8 @@ logger = logging.getLogger(__name__)
 MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
 
 MODEL_CLASSES = {
-    "gpt2": (GPT2TimeLMHeadModel, GPT2Tokenizer),
+    # "gpt2": (GPT2TimeLMHeadModel, GPT2Tokenizer),
+    "gpt2": (GPT2TimeLMHeadModel, BertTokenizer),
 }
 
 def set_seed(args):
