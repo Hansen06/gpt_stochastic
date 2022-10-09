@@ -17,6 +17,8 @@ PATH2TM2=os.path.join(DATA_PATH,'tm2')
 PATH2ROCSTORIES=os.path.join(DATA_PATH,'roc_stories')
 
 PATH2TICKETTALK=os.path.join(DATA_PATH,'tickettalk')
+PATH2Erke=os.path.join(DATA_PATH,'erke')
+
 PATH2GPT=os.path.join(REPO_PATH, 'checkpoint/gpt2')
 TOKENIZER_NAME = 'GPT2'
 

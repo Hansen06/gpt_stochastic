@@ -35,6 +35,7 @@ from collections import defaultdict
 
 from ....transformers import (
     GPT2Tokenizer,
+    BertTokenizer
 )
 
 import constants
@@ -544,7 +545,7 @@ class EekeDataset(TextDataset):
                  block_size: int,
                  use_section_null: bool,
                  special_words:list,
-                 data_dir=os.path.join(constants.PATH2RECIPENLG, 'dataset'),
+                 data_dir=constants.PATH2Erke,
                  overwrite_cache=False,
                  cache_dir: Optional[str] = None,
                  name: str = 'wikihow'
@@ -556,7 +557,6 @@ class EekeDataset(TextDataset):
                  overwrite_cache=overwrite_cache,
                  cache_dir=cache_dir,)
         self.name = name
-        self.train = True if 'train' in file_path else False
         self.cpu_device = torch.device('cpu')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.cl_model = cl_model
@@ -569,8 +569,17 @@ class EekeDataset(TextDataset):
         self.train = 'train' in self.file_path
         self.block_size = block_size
         self.cl_offset = 0
-        self._set_indices()
-        self.set_cl_tokenizer()
+
+        print('==============LOADING ERKE DATA==============')
+        if self.train:
+            self.data_files = ['train-.json']
+        else:
+            self.data_files = ['valid-.json']
+
+        # self.cl_tokenizer = GPT2Tokenizer.from_pretrained(constants.PATH2GPT)
+        self.cl_tokenizer = BertTokenizer.from_pretrained(constants.PATH2GPT)
+        self.cl_tokenizer.pad_token = self.cl_tokenizer.eos_token
+        self.cl_tokenizer.add_tokens(self.special_words)
 
         self.use_section_null = use_section_null
         self.tokenizer = tokenizer
@@ -588,15 +597,11 @@ class EekeDataset(TextDataset):
         # id token
         section_tokens = self.tokenizer(self.section_names)['input_ids']
         self.section_tokens = [tok[0] for tok in section_tokens]
-        self.cl_eos_id = self.tokenizer(self.cl_eos_str)['input_ids'][0]
-        assert self.cl_eos_id > 50000  # just checking its a new token
+        self.cl_eos_id = self.tokenizer(self.cl_eos_str)['input_ids'][1]
+        print('========self.cl_eos_id {}========'.format(self.cl_eos_id))
+        assert self.cl_eos_id > 20000  # just checking its a new token
 
         self._process_dataset()
-
-    def set_cl_tokenizer(self):
-        self.cl_tokenizer = GPT2Tokenizer.from_pretrained(constants.PATH2GPT)
-        self.cl_tokenizer.pad_token = self.cl_tokenizer.eos_token
-        self.cl_tokenizer.add_tokens(self.special_words)
 
     def cl_tokenize(self, text, device):
         output = self.cl_tokenizer(
@@ -612,13 +617,6 @@ class EekeDataset(TextDataset):
         attention_mask = torch.cat((attention_mask, eos_attention.T), dim=1)
         return input_ids.to(device), attention_mask.to(device)
 
-    def _set_indices(self):
-        print('LOADING MOVIE TM')
-        self.data_dir = constants.PATH2TICKETTALK
-        if self.train:
-            self.data_files = ['data_0{}.json'.format(i) for i in range(0, 3)]
-        else:
-            self.data_files = ['data_{}.json'.format(i) for i in range(13, 14)]
 
     def _process_dataset(self):
         num_filtered = 0

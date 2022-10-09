@@ -22,7 +22,8 @@ from transformers.src.transformers import (
     MODEL_FOR_CAUSAL_LM_MAPPING,
     AutoConfig,
     AutoModelForCausalLM,
-    AutoTokenizer,
+    GPT2Tokenizer,
+    BertTokenizer,
     HfArgumentParser,
     Trainer_Time,
     TrainingArguments,
@@ -223,16 +224,15 @@ def get_data_paths(data_args: DataTrainingArguments):
 
     """
     assert data_args.dataset_name in [
-        'wikisection', 'roc_stories', 'wikihow', 'recipe', 'tm2', 'tickettalk']
+        'wikisection', 'roc_stories', 'wikihow', 'recipe', 'erke', 'tickettalk']
     # Default datapaths
-    import constants
     train_path = os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.train.txt")
     val_path = os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.val.txt")
-    test_path =  os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.test.txt")
-    if "roc_stories" in data_args.dataset_name:
-        train_path = os.path.join(constants.PATH2ROCSTORIES, "train.pkl")
-        val_path = os.path.join(constants.PATH2ROCSTORIES, "valid.pkl")
-        test_path = os.path.join(constants.PATH2ROCSTORIES, "test.pkl")
+    test_path = os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.test.txt")
+    if "erke" in data_args.dataset_name:
+        train_path = os.path.join(constants.PATH2Erke, "train-.json")
+        val_path = os.path.join(constants.PATH2Erke, "valid-.json")
+        test_path = os.path.join(constants.PATH2Erke, "valid-.json")
     return train_path, val_path, test_path
 
 def get_dataset(
@@ -334,6 +334,13 @@ def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
 
 def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
     SECTION_IDS = []
+    if 'erke' in dataset_name:
+        SECTION_IDS = [
+            '[ user ]',
+            '[ assistant ]',
+            # '<|endoftext|>'
+        ]
+
     if 'tickettalk' in dataset_name:
         SECTION_IDS = [
             '[ USER ]',
@@ -352,7 +359,7 @@ def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
             print("Adding tokens, ", SECTION_IDS)
             tokenizer.add_tokens(SECTION_IDS)
         print("New tokenizer size: ", len(tokenizer))
-    SPECIAL_TOKENS = [_[0] for _ in tokenizer(SECTION_IDS)['input_ids']]
+    SPECIAL_TOKENS = [_[1] for _ in tokenizer(SECTION_IDS)['input_ids']]
     return SECTION_IDS, SPECIAL_TOKENS, tokenizer
 
 def main():
@@ -444,19 +451,23 @@ def main():
     config.dataset_name = data_args.dataset_name
     config.cl_latent_dim = model_args.latent_dim
 
+
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
         "use_fast": model_args.use_fast_tokenizer,
         "revision": model_args.model_revision,
         "use_auth_token": True if model_args.use_auth_token else None,
     }
-    tokenizer = AutoTokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
+    # tokenizer = GPT2Tokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
+    tokenizer = BertTokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
+    tokenizer.eos_token = '[SEP]'
     tokenizer.pad_token = tokenizer.eos_token
 
     SECTION_IDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(
         dataset_name=data_args.dataset_name, tokenizer=tokenizer)
     # -1 because of the added " . "
     config.max_num_sections = len(SECTION_IDS) - 1
+
 
     if model_args.model_name_or_path:
         model = GPT2TimeLMHeadModel.from_pretrained(
@@ -476,7 +487,7 @@ def main():
     model.transformer.special_tokens = SPECIAL_TOKENS
     print("Resized model to {}".format(len(tokenizer)))
     print("Added special tokens, ", SPECIAL_TOKENS)
-    print("Added special tokens, ", SECTION_IDS)
+    print("Added special ids, ", SECTION_IDS)
 
     # Getting checkpoint dict:
     cpu_device = torch.device('cpu')

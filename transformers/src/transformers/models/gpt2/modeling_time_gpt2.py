@@ -26,7 +26,8 @@ from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
 
 from transformers.src.transformers import (
-    GPT2Tokenizer
+    GPT2Tokenizer,
+    BertTokenizer
 )
 
 from ...activations import ACT2FN
@@ -59,7 +60,8 @@ logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "gpt2"
 _CONFIG_FOR_DOC = "GPT2Config"
-_TOKENIZER_FOR_DOC = "GPT2Tokenizer"
+# _TOKENIZER_FOR_DOC = "GPT2Tokenizer"
+_TOKENIZER_FOR_DOC = "BertTokenizer"
 
 GPT2_PRETRAINED_MODEL_ARCHIVE_LIST = [
     "gpt2",
@@ -588,7 +590,8 @@ class GPT2TimeModel(GPT2PreTrainedModel):
         if hasattr(config, "cl_latent_dim") and config.cl_latent_dim is not None:
             self.cl2e = nn.Linear(config.cl_latent_dim, self.embed_dim)
 
-        self.cl_tokenizer = GPT2Tokenizer.from_pretrained(constants.PATH2GPT)
+        # self.cl_tokenizer = GPT2Tokenizer.from_pretrained(constants.PATH2GPT)
+        self.cl_tokenizer = BertTokenizer.from_pretrained(constants.PATH2GPT)
         self.cl_tokenizer.pad_token = self.cl_tokenizer.eos_token
         self.cl_end_token = self.cl_tokenizer.eos_token_id
 
