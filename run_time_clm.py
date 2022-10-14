@@ -338,7 +338,7 @@ def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
         SECTION_IDS = [
             '[ user ]',
             '[ assistant ]',
-            # '<|endoftext|>'
+            '<|endoftext|>'
         ]
 
     if 'tickettalk' in dataset_name:
@@ -460,8 +460,8 @@ def main():
     }
     # tokenizer = GPT2Tokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
     tokenizer = BertTokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
-    tokenizer.eos_token = '[SEP]'
-    tokenizer.bos_token = '[SEP]'
+    tokenizer.eos_token = '<|endoftext|>'
+    tokenizer.bos_token = '<|endoftext|>'
     tokenizer.pad_token = tokenizer.eos_token
 
     SECTION_IDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(

@@ -660,8 +660,8 @@ class EekeDataset(TextDataset):
         cl_embeddings = []
         eos_idxs = self.get_end_points(tokenized_example)
 
-        print('=======len eos_idxs :{}============'.format(len(eos_idxs)))
-        print('=======len cl_text :{}============'.format(len(cl_text)))
+        # print('=======len eos_idxs :{}============'.format(len(eos_idxs)))
+        # print('=======len cl_text :{}============'.format(len(cl_text)))
 
         assert len(eos_idxs) == len(cl_text)
 
