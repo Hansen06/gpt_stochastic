@@ -26,7 +26,7 @@ class ErkeDataset(encoder.BaseDataset):
 
     def _set_section_names(self):
         # For movies: https://github.com/google-research-datasets/Taskmaster/tree/master/TM-3-2020
-        self.section_names = ['user', 'assistant']
+        self.section_names = ['user', 'assistant', '<|endoftext|>']
         self.section_ids = ['[ {} ]'.format(name.upper()) for name in self.section_names]
 
         # print("tm type: ", self.config.data_params.tm_type)

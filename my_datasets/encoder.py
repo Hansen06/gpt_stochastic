@@ -117,6 +117,7 @@ class BaseDataset(data.Dataset):
         # Add section ids
         self.cl_eos_str = " . "
         self.tokenizer.add_tokens(self.section_ids + [self.cl_eos_str])
+        print('================self.tokenizer.add_tokens : {}=============='.format(self.tokenizer.add_tokens))
         try:
             self.special_tokens = [_[0] for _ in self.tokenizer(self.section_ids)['input_ids']]
         except:
