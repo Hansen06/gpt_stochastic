@@ -104,7 +104,7 @@ class BrownianBridgeSystem(pl.LightningModule):
         return create_dataloader(self.train_dataset, self.config)
 
     def test_dataloader(self):
-        return create_dataloader(self.test_dataset, self.config, shuffle=False)
+            return create_dataloader(self.test_dataset, self.config, shuffle=False)
 
     def set_to_train(self):
         pass
