@@ -532,7 +532,7 @@ class TaskmasterDataset(TextDataset):
                 self.cl_texts[i]
                 )
 
-class EekeDataset(TextDataset):
+class EekeDataset():
     """
     This will be superseded by a framework-agnostic approach
     soon.
@@ -550,12 +550,6 @@ class EekeDataset(TextDataset):
                  cache_dir: Optional[str] = None,
                  name: str = 'wikihow'
                  ):
-        super(EekeDataset, self).__init__(
-                tokenizer=tokenizer,
-                 file_path=file_path,
-                 block_size=block_size,
-                 overwrite_cache=overwrite_cache,
-                 cache_dir=cache_dir,)
         self.name = name
         self.cpu_device = torch.device('cpu')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -567,7 +561,7 @@ class EekeDataset(TextDataset):
         self.file_path = file_path
         self.data_dir = data_dir
         self.train = 'train' in self.file_path
-        self.block_size = block_size
+        self.block_size = block_size - tokenizer.num_special_tokens_to_add(pair=False)
         self.cl_offset = 0
 
         print('==============LOADING ERKE DATA==============')
@@ -610,8 +604,6 @@ class EekeDataset(TextDataset):
         # self.lengths = defaultdict(lambda: [])
         for fname in self.data_files:
             data = json.load(open(os.path.join(self.data_dir, fname), 'rb'))
-            if "restaurant" in self.name:
-                data = data[self.start_conversation:self.end_conversation]
             for conversation in data:
                 full_text = ""
                 cl_text = []
@@ -622,10 +614,13 @@ class EekeDataset(TextDataset):
                 row = f"{self.tokenizer.bos_token} {full_text} {self.tokenizer.eos_token}"
                 tokenized_text = self.tokenizer.convert_tokens_to_ids(
                     self.tokenizer.tokenize(row))
+                # print('row :{}'.format(row))
+                # print('tokenized_text :{}'.format(tokenized_text))
                 if len(tokenized_text) >= self.block_size:
                     num_filtered+=1
                 else:
-                    example = self.tokenizer.build_inputs_with_special_tokens(tokenized_text)
+                    example = self.tokenizer.build_inputs_with_special_tokens(tokenized_text) #在头尾分别添加[CLS]和[SEP] token
+                    # print('example: {}'.format(example))
                     self.examples.append(example)
                     self.cl_texts.append(full_text)
                     section_ids = [0]
@@ -645,6 +640,8 @@ class EekeDataset(TextDataset):
         print("examples")
         print(self.raw_texts[0])
         print(self.raw_texts[-1])
+        print(self.examples[0])
+        print(self.cl_embeddings[0])
 
     def get_end_points(self, tokenized_example):
         eos_idxs = []
