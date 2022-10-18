@@ -288,8 +288,6 @@ def main():
     print("Checking example embeddings: {}".format(eval_dataset.cl_embeddings[-1][-1]))
 
     for  num_example in tqdm.tqdm(range(num_intervals)):
-        if 'wiki' in args.dataset_name:
-            split_text = eval_dataset.cl_texts[num_example].split('. ')[:-1]
         if args.use_dataset or args.method == "greedy" or args.method == "beam":
             if 'wikisection' in args.dataset_name:
                 k = 3
