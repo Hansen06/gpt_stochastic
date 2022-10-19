@@ -188,11 +188,6 @@ def main():
 
     model.transformer._config.use_contrastive_embeddings = True
 
-    if args.suppress_eos:
-        bad_words_ids = [[tokenizer.eos_token_id]]
-    else:
-        bad_words_ids = None
-
     if args.no_eos:
         min_length = 1023
     else:
@@ -200,6 +195,18 @@ def main():
 
     SECTION_IDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(
         dataset_name=args.dataset_name, tokenizer=tokenizer)
+
+    tokenizer.eos_token = '<|endoftext|>'
+    tokenizer.bos_token = '<|endoftext|>'
+    tokenizer.pad_token = tokenizer.eos_token
+
+    tokenizer.eos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>')  # 修改id 50256->21130  hugging默认是50256，即英文模型大小
+    tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>')  # 修改id 50256->21130
+
+    if args.suppress_eos:
+        bad_words_ids = [[tokenizer.eos_token_id]]
+    else:
+        bad_words_ids = None
 
     model.transformer.special_tokens = SPECIAL_TOKENS
     base_model = 'gpt2'
@@ -214,25 +221,6 @@ def main():
     CL_MODEL.to(args.device)
     CL_MODEL.eval()
     # model.transformer.CL_MODEL = CL_MODEL
-
-    fname = args.model_name_or_path.split('/')[-2]
-    args.encoder_type = 'contrastt'
-
-    gt_cl_tracker = GenerationMetrics(model=model, device=args.device,
-                                tokenizer=tokenizer, dataset_name=args.dataset_name,
-                                fname=fname+"_trueCLEmbs_" + args.method,
-                                model_args=args,
-                                subclass="GT")
-    random_cl_tracker = GenerationMetrics(model=model, device=args.device,
-                                tokenizer=tokenizer, dataset_name=args.dataset_name,
-                            model_args=args,
-                                fname=fname+"_randomCLEmbs_"+args.method,
-                                subclass="RANDOM")
-    bridge_cl_tracker = GenerationMetrics(model=model, device=args.device,
-                                tokenizer=tokenizer, dataset_name=args.dataset_name,
-                                fname=fname+"_bridgeCLEmbs_"+args.method,
-                            model_args=args,
-                                subclass="BRIDGE")
 
     if args.fp16:
         model.half()
@@ -282,31 +270,16 @@ def main():
 
     num_intervals = len(eval_dataset)
 
-    print("Checking example embeddings: {}".format(eval_dataset.cl_embeddings[0][0]))
-    print("Checking example embeddings: {}".format(eval_dataset.cl_embeddings[0][-1]))
-    print("Checking example embeddings: {}".format(eval_dataset.cl_embeddings[-1][0]))
-    print("Checking example embeddings: {}".format(eval_dataset.cl_embeddings[-1][-1]))
-
     for  num_example in tqdm.tqdm(range(num_intervals)):
-        if args.use_dataset or args.method == "greedy" or args.method == "beam":
-            if 'wikisection' in args.dataset_name:
-                k = 3
-            else:
-                k = 5
-            example = eval_dataset.examples[num_example][:k]
-            encoded_prompt = torch.tensor([example]).to(args.device)
-            input_ids = encoded_prompt
-            prompt_text = tokenizer.decode(example, skip_special_tokens=True)
-            print("Using eval prompt: {}".format(prompt_text))
-        else: # stories
-            row = eval_dataset.cl_texts[num_example]
-            row = row.replace('<newline>', '')
-            row = row.replace(' , ', ', ')
-            row = row.strip() # NOTE: remove break line
-            row = ' '.join(row.split()) # remove multiple spaces
-            split_pattern = " . "
-            split_text = row.split(split_pattern)[:-1]
-            split_text = [ _ + split_pattern for _ in split_text ]
+        if 'wikisection' in args.dataset_name:
+            k = 3
+        else:
+            k = 5
+        example = eval_dataset.examples[num_example][:k]
+        encoded_prompt = torch.tensor([example]).to(args.device)
+        input_ids = encoded_prompt
+        prompt_text = tokenizer.decode(example, skip_special_tokens=True)
+        print("Using eval prompt: {}".format(prompt_text))
 
 
         print('[ ACTUAL ] {}'.format(eval_dataset.raw_texts[num_example]))
@@ -314,7 +287,6 @@ def main():
         # Get all the CL feats
         true_cl_feats = torch.stack(eval_dataset.cl_embeddings[num_example])
         true_cl_feats = true_cl_feats[::args.split_sentences]
-        # true_cl_feats = eval_dataset.__getitem__(_)[-2]
 
         LABELS = ['TRUE CL', 'BRIDGE CL (DE)',
                   # 'RANDOM CL'
@@ -323,7 +295,6 @@ def main():
         print(f"DENSITY ESTIMATE: {last_latent_mu}")
         print(f"DENSITY ESTIMATE STD: {last_latent_std}")
         B_T = np.random.normal(loc=last_latent_mu, scale=last_latent_std)
-
 
         num_sentences = len(true_cl_feats) if not args.split_sentences else int(len(true_cl_feats)/float(args.split_sentences))
         num_sentences *= args.multiply_sentences
@@ -350,16 +321,10 @@ def main():
         end_lengths = np.ones(end_lengths.shape)
         end_lengths = end_lengths.astype(np.int)
 
-        if 'tc' in args.encoder_filepath:
-            bridge_feats = simulate_brownian_bridge(
-                B_0=true_cl_feats[0], B_T=B_T, num_samples=num_sentences,
-                sentence_lengths=end_lengths
-            )
-        else:
-            bridge_feats = [true_cl_feats[0].detach().cpu().numpy()]
-            for _ in range(num_sentences):
-                feat = (1 - _/num_sentences) * bridge_feats[0] + _/num_sentences * B_T
-                bridge_feats.append(feat)
+        bridge_feats = simulate_brownian_bridge(
+            B_0=true_cl_feats[0], B_T=B_T, num_samples=num_sentences,
+            sentence_lengths=end_lengths
+        )
 
         bridge_feats = torch.tensor(
             bridge_feats, dtype=true_cl_feats.dtype).to(args.device)
@@ -369,12 +334,7 @@ def main():
 
         # wandb.log({"diff_feats": (bridge_feats-true_cl_feats).sum()/bridge_feats.shape[0]})
 
-        trackers = [gt_cl_tracker, 
-                    bridge_cl_tracker,
-                    # random_cl_tracker
-                    ]
-
-        for seq_i, (seq_cl_feats, tracker) in enumerate(zip(feats, trackers)):
+        for seq_i, seq_cl_feats in enumerate(feats):
             cl_feats = seq_cl_feats[0] # Get the first sentence feat
             prefix = args.prefix if args.prefix else args.padding_text
             encoded_prompt = tokenizer.encode(prefix + prompt_text, add_special_tokens=True, return_tensors="pt")
@@ -469,16 +429,9 @@ def main():
                     prompt_text + text[len(tokenizer.decode(encoded_prompt[0], skip_special_tokens=True)) :]
                 )
 
-                gt_raw_seq = eval_dataset.raw_texts[num_example]
-                tracker.calculate(input_ids=original, raw_seq=total_sequence,
-                                  cl_feats=cl_feats,
-                                  gt_raw_seq=gt_raw_seq
-                                  )
                 generated_sequences.append(total_sequence)
                 print("[ GENERATED FOR {} ]: {}".format(LABELS[seq_i], total_sequence))
 
-    for tracker in trackers:
-        tracker.print_results()
     return generated_sequences
 
 
