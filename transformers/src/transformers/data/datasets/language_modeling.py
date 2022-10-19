@@ -541,16 +541,13 @@ class EekeDataset():
     def __init__(self,
                  cl_model,
                  tokenizer: PreTrainedTokenizer,
-                 file_path: str,
                  block_size: int,
                  use_section_null: bool,
                  special_words:list,
                  data_dir=constants.PATH2Erke,
-                 overwrite_cache=False,
-                 cache_dir: Optional[str] = None,
-                 name: str = 'wikihow'
+                 data_names: str = 'wikihow'
                  ):
-        self.name = name
+        self.data_names = data_names
         self.cpu_device = torch.device('cpu')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.cl_model = cl_model
@@ -558,9 +555,8 @@ class EekeDataset():
         self.special_words = special_words
         assert self.special_words  # should not be emtpy
         self.special_tokens = [_[1] for _ in tokenizer(self.special_words)['input_ids']]
-        self.file_path = file_path
         self.data_dir = data_dir
-        self.train = 'train' in self.file_path
+        self.train = 'train' in self.data_names
         self.block_size = block_size - tokenizer.num_special_tokens_to_add(pair=False)
         self.cl_offset = 0
 
@@ -656,9 +652,10 @@ class EekeDataset():
 
         cl_embeddings = []
         eos_idxs = self.get_end_points(tokenized_example)
-
-        # print('=======len eos_idxs :{}============'.format(len(eos_idxs)))
-        # print('=======len cl_text :{}============'.format(len(cl_text)))
+        print('tokenized_example : {}'.format(tokenized_example))
+        print('eos_idxs : {}'.format(eos_idxs))
+        print('=======len eos_idxs :{}============'.format(len(eos_idxs)))
+        print('=======len cl_text :{}============'.format(len(cl_text)))
 
         assert len(eos_idxs) == len(cl_text)
 

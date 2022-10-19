@@ -21,6 +21,7 @@ from transformers.src.transformers import (
     CONFIG_MAPPING,
     MODEL_FOR_CAUSAL_LM_MAPPING,
     AutoConfig,
+    GPT2Config,
     AutoModelForCausalLM,
     GPT2Tokenizer,
     BertTokenizer,
@@ -31,11 +32,11 @@ from transformers.src.transformers import (
     PreTrainedTokenizer,
     DataCollatorForTimeControl,
     WikisectionDataset,
-    EekeDataset,
+    # EekeDataset,
     TaskmasterDataset,
     GPT2TimeLMHeadModel,
 )
-
+from my_datasets.lm_dataset import EekeDataset
 from transformers.src.transformers.trainer_utils import get_last_checkpoint
 from transformers.src.transformers.utils import check_min_version
 from transformers.src.transformers.utils.versions import require_version
@@ -241,8 +242,7 @@ def get_dataset(
     tokenizer: PreTrainedTokenizer,
     file_path: str,
     special_words: list,
-    cache_dir: Optional[str] = None,
-    training_args: TrainingArguments = None,
+    data_names,
 ):
     if "wikisection" in args.dataset_name:
         dataset = WikisectionDataset(
@@ -261,17 +261,16 @@ def get_dataset(
             special_words=special_words,
             block_size=args.block_size,
             cl_model=cl_model,
-            name=args.dataset_name
+            data_names=data_names
         )
     elif 'erke' in args.dataset_name:
         dataset = EekeDataset(
             tokenizer=tokenizer,
-            file_path=file_path,
             use_section_null=args.use_section_null,
             special_words=special_words,
             block_size=args.block_size,
             cl_model=cl_model,
-            name=args.dataset_name
+            data_names=data_names
         )
     return dataset
 
@@ -352,7 +351,8 @@ def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
         # NOTE loading previous tokenizer sometimes already includes the new tokens
         eos = tokenizer(' . ')['input_ids']
         print("Old tokenizer size: ", len(tokenizer))
-        if len(eos) == 1 and eos[0] == 50256 + len(SECTION_IDS):
+        if len(eos) == 1 and eos[0] == 21128 + len(SECTION_IDS):
+            print('========================================================================')
             print("Not adding because it's already contained")
             pass # don't add cause it's already contained
         else:
@@ -435,14 +435,18 @@ def main():
     if model_args.config_name:
         config = AutoConfig.from_pretrained(model_args.config_name, **config_kwargs)
     elif model_args.model_name_or_path:
-        config = AutoConfig.from_pretrained(gpt2_path, **config_kwargs)
+        config = GPT2Config.from_pretrained(gpt2_path, **config_kwargs)
+
+        print('=============================there there there========================')
+        print(gpt2_path)
+        print(config)
+
     else:
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
         if model_args.config_overrides is not None:
             logger.info(f"Overriding config: {model_args.config_overrides}")
             config.update_from_string(model_args.config_overrides)
-
 
     config.use_contrastive_embeddings = model_args.use_contrastive_embeddings
     config.embedding_type = model_args.embedding_type
@@ -460,14 +464,21 @@ def main():
     }
     # tokenizer = GPT2Tokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
     tokenizer = BertTokenizer.from_pretrained(gpt2_path, **tokenizer_kwargs)
-    tokenizer.eos_token = '<|endoftext|>'
-    tokenizer.bos_token = '<|endoftext|>'
-    tokenizer.pad_token = tokenizer.eos_token
 
     SECTION_IDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(
         dataset_name=data_args.dataset_name, tokenizer=tokenizer)
     # -1 because of the added " . "
     config.max_num_sections = len(SECTION_IDS) - 1
+
+    tokenizer.eos_token = '<|endoftext|>'
+    tokenizer.bos_token = '<|endoftext|>'
+    tokenizer.pad_token = tokenizer.eos_token
+
+    config.eos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>') # 修改id 50256->21130  hugging默认是50256，即英文模型大小
+    config.bos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>') # 修改id 50256->21130
+
+    print('=============================here here here========================')
+    print(config)
 
 
     if model_args.model_name_or_path:
@@ -525,18 +536,16 @@ def main():
     train_dataset = get_dataset(
         args=data_args, tokenizer=tokenizer,
         file_path=train_path,
-        cache_dir=model_args.cache_dir,
         special_words=SECTION_IDS,
-        training_args=training_args,
-        cl_model=CL_MODEL
+        cl_model=CL_MODEL,
+        data_names='train'
     )
     eval_dataset = get_dataset(
         args=data_args, tokenizer=tokenizer,
         file_path=eval_path,
         special_words=SECTION_IDS,
-        cache_dir=model_args.cache_dir,
-        training_args=training_args,
-        cl_model=CL_MODEL
+        cl_model=CL_MODEL,
+        data_names = 'eval'
     )
 
     data_collator = get_data_collator(
