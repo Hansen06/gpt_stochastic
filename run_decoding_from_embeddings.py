@@ -14,19 +14,19 @@ import numpy as np
 import torch
 import tqdm
 import constants
-
+import torch.nn as nn
+from model import language
+import transformers.src.transformers
 from transformers.src.transformers import (
     GPT2TimeLMHeadModel,
     GPT2Tokenizer,
     BertTokenizer
 )
 
+from my_datasets.language_modeling import EekeDataset
 from generation_metrics import GenerationMetrics
-from run_time_clm import (
-    get_checkpoint,
-    get_special_tokens,
-    get_data_paths,
-    get_dataset)
+
+
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -42,6 +42,86 @@ MODEL_CLASSES = {
     "gpt2": (GPT2TimeLMHeadModel, BertTokenizer),
 }
 
+def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
+                   use_section_ids=False, token_size=None,
+                   filepath=None):
+    '''
+    加载布朗模型
+    '''
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    model = language.GPT2OUEncoder(
+        hidden_dim=128,
+        latent_dim=latent_dim,
+        finetune_gpt2=False)
+    if use_section_ids:
+        model.model.resize_token_embeddings(token_size)
+
+    transformers.__spec__ = 'gpt2'  # Avoid bug
+    state_dict = torch.load(filepath)
+    new_dict = {}
+    for k, v in state_dict['state_dict'].items():
+        if any([i in k for i in ['model.model.g_ar', 'model.model.W_k']]):
+            new_dict[k[6:]] = v
+        elif any([i in k for i in ['model.g_ar', 'model.W_k', 'time_model']]):
+            continue
+        elif "model." in k:
+            new_dict[k[6:]] = v
+        else:
+            new_dict[k] = v
+
+    if any(['g_ar' in k for k in new_dict.keys()]):
+        model.g_ar = nn.GRU(input_size=latent_dim,
+                            hidden_size=2400,  # default number in infoNCE for langauge
+                            num_layers=3,
+                            batch_first=True
+                            )
+        model.W_k = nn.Linear(2400, latent_dim)
+    elif any(['time_model' in k for k in state_dict['state_dict'].keys()]):
+        model.fc_mu = nn.Linear(latent_dim, latent_dim)
+        model.fc_var = nn.Linear(latent_dim, latent_dim)
+
+    model.load_state_dict(new_dict)
+    for p in model.parameters():
+        p.requires_grad = False
+
+    model.to(device)
+    model = model.eval()
+    return model
+
+
+def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
+    SECTION_IDS = []
+    if 'erke' in dataset_name:
+        SECTION_IDS = [
+            '[ user ]',
+            '[ assistant ]',
+            '<|endoftext|>'
+        ]
+
+    if 'tickettalk' in dataset_name:
+        SECTION_IDS = [
+            '[ USER ]',
+            '[ ASSISTANT ]',
+        ]
+
+    SECTION_IDS += [' . ']
+    if add_tokens:
+        # NOTE loading previous tokenizer sometimes already includes the new tokens
+        eos = tokenizer(' . ')['input_ids']
+        print("Old tokenizer size: ", len(tokenizer))
+        if len(eos) == 1 and eos[0] == 21128 + len(SECTION_IDS):
+            print('========================================================================')
+            print("Not adding because it's already contained")
+            pass # don't add cause it's already contained
+        else:
+            print("Adding tokens, ", SECTION_IDS)
+            tokenizer.add_tokens(SECTION_IDS)
+        print("New tokenizer size: ", len(tokenizer))
+    SPECIAL_TOKENS = [_[1] for _ in tokenizer(SECTION_IDS)['input_ids']]
+    return SECTION_IDS, SPECIAL_TOKENS, tokenizer
+
+
 def set_seed(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -56,7 +136,6 @@ def adjust_length_to_model(length, max_sequence_length):
     elif length < 0:
         length = MAX_LENGTH  # avoid infinite loop
     return length
-
 
 def simulate_brownian_bridge(B_0, B_T, num_samples, sentence_lengths, dt=0.05, mu=0.0, sigma=1.0):
     """Run bridge forward pinned at B_0 and B_T"""
@@ -198,7 +277,7 @@ def main():
     else:
         min_length= 10 # default value
 
-    SECTION_IDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(
+    SECTION_WORDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(
         dataset_name=args.dataset_name, tokenizer=tokenizer)
 
     model.transformer.special_tokens = SPECIAL_TOKENS
@@ -255,24 +334,20 @@ def main():
     assert args.dataset_name
 
     print(f'Args: {args}')
-    train_path, _, eval_path = get_data_paths(args)
-    train_dataset = get_dataset(
-        args=args,
+    train_dataset = EekeDataset(
         tokenizer=tokenizer,
-        file_path=train_path,
-        special_words=SECTION_IDS,
+        special_words=SECTION_WORDS,
+        block_size=args.block_size,
         cl_model=CL_MODEL,
         data_names='train'
     )
-    eval_dataset = get_dataset(
-        args=args,
+    eval_dataset = EekeDataset(
         tokenizer=tokenizer,
-        file_path=eval_path,
-        special_words=SECTION_IDS,
+        special_words=SECTION_WORDS,
+        block_size=args.block_size,
         cl_model=CL_MODEL,
         data_names='eval'
     )
-
 
     # Estimate dnesity for last sentence
     first_latent_mu, first_latent_std, last_latent_mu, last_latent_std = get_density(dataset=train_dataset, lm=model, cl_model=CL_MODEL)
@@ -298,6 +373,7 @@ def main():
             input_ids = encoded_prompt
             prompt_text = tokenizer.decode(example, skip_special_tokens=True)
             print("Using eval prompt: {}".format(prompt_text))
+
         else: # stories
             row = eval_dataset.cl_texts[num_example]
             row = row.replace('<newline>', '')
@@ -324,9 +400,11 @@ def main():
         print(f"DENSITY ESTIMATE STD: {last_latent_std}")
         B_T = np.random.normal(loc=last_latent_mu, scale=last_latent_std)
 
-
+        num_sentences = len(true_cl_feats)
+        print(f"before num_sentences: {num_sentences}")
         num_sentences = len(true_cl_feats) if not args.split_sentences else int(len(true_cl_feats)/float(args.split_sentences))
         num_sentences *= args.multiply_sentences
+        print(f"after num_sentences: {num_sentences}")
 
         try:
             actual_inputs = eval_dataset.examples[num_example]
@@ -350,16 +428,16 @@ def main():
         end_lengths = np.ones(end_lengths.shape)
         end_lengths = end_lengths.astype(np.int)
 
-        if 'tc' in args.encoder_filepath:
-            bridge_feats = simulate_brownian_bridge(
-                B_0=true_cl_feats[0], B_T=B_T, num_samples=num_sentences,
-                sentence_lengths=end_lengths
-            )
-        else:
-            bridge_feats = [true_cl_feats[0].detach().cpu().numpy()]
-            for _ in range(num_sentences):
-                feat = (1 - _/num_sentences) * bridge_feats[0] + _/num_sentences * B_T
-                bridge_feats.append(feat)
+        # if 'tc' in args.encoder_filepath:
+        bridge_feats = simulate_brownian_bridge(
+            B_0=true_cl_feats[0], B_T=B_T, num_samples=num_sentences,
+            sentence_lengths=end_lengths
+        )
+        # else:
+        #     bridge_feats = [true_cl_feats[0].detach().cpu().numpy()]
+        #     for _ in range(num_sentences):
+        #         feat = (1 - _/num_sentences) * bridge_feats[0] + _/num_sentences * B_T
+        #         bridge_feats.append(feat)
 
         bridge_feats = torch.tensor(
             bridge_feats, dtype=true_cl_feats.dtype).to(args.device)
@@ -377,6 +455,7 @@ def main():
         for seq_i, (seq_cl_feats, tracker) in enumerate(zip(feats, trackers)):
             cl_feats = seq_cl_feats[0] # Get the first sentence feat
             prefix = args.prefix if args.prefix else args.padding_text
+            print('prefix :{}\tprompt_text:{}'.format(prefix, prompt_text))
             encoded_prompt = tokenizer.encode(prefix + prompt_text, add_special_tokens=True, return_tensors="pt")
             encoded_prompt = encoded_prompt.to(args.device)
 
