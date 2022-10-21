@@ -187,7 +187,7 @@ class EekeDataset():
                     self.examples.append(example)
                     self.cl_texts.append(full_text)
                     section_ids = [0]
-                    self.get_cl_embeddings(example, full_text, cl_text, gpt2_text=row)
+                    self.get_cl_embeddings(example, cl_text)
                     self.section_ids.append(section_ids)
                     self.raw_texts.append(row)
             if len(self.examples) > 1240:
@@ -219,7 +219,7 @@ class EekeDataset():
         eos_idxs = eos_idxs[1:]
         return eos_idxs
 
-    def get_cl_embeddings(self, tokenized_example, raw_text, cl_text, gpt2_text):
+    def get_cl_embeddings(self, tokenized_example, cl_text):
 
         cl_embeddings = []
         eos_idxs = self.get_end_points(tokenized_example)

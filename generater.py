@@ -89,33 +89,32 @@ def get_density(dataset, lm, cl_model):
 
 
 def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
-    SECTION_IDS = []
+    SPECIAL_TOKENS = []
     if 'erke' in dataset_name:
-        SECTION_IDS = [
+        SPECIAL_TOKENS = [
             '[ user ]',
             '[ assistant ]',
             '<|endoftext|>'
         ]
 
-    SECTION_IDS += [' . ']
+    SPECIAL_TOKENS += [' . ']
     if add_tokens:
         # NOTE loading previous tokenizer sometimes already includes the new tokens
         eos = tokenizer(' . ')['input_ids']
         print("Old tokenizer size: ", len(tokenizer))
-        if len(eos) == 1 and eos[0] == 21128 + len(SECTION_IDS):
+        if len(eos) == 1 and eos[0] == 21128 + len(SPECIAL_TOKENS):
             print('========================================================================')
             print("Not adding because it's already contained")
             pass  # don't add cause it's already contained
         else:
-            print("Adding tokens, ", SECTION_IDS)
-            tokenizer.add_tokens(SECTION_IDS)
+            print("Adding tokens, ", SPECIAL_TOKENS)
+            tokenizer.add_tokens(SPECIAL_TOKENS)
         print("New tokenizer size: ", len(tokenizer))
-    SPECIAL_TOKENS = [_[1] for _ in tokenizer(SECTION_IDS)['input_ids']]
+    SECTION_IDS = [_[1] for _ in tokenizer(SPECIAL_TOKENS)['input_ids']]
     return SECTION_IDS, SPECIAL_TOKENS, tokenizer
 
 
-def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
-                   use_section_ids=False, token_size=None,
+def get_checkpoint(latent_dim, use_section_ids=False, token_size=None,
                    filepath=None):
     '''
     加载布朗模型
@@ -162,21 +161,25 @@ def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
     return model
 
 
-def cl_tokenize(self, text, device):
-    output = self.tokenizer(
+def cl_tokenize(tokenizer, text, device):
+    output = tokenizer(
         text,
         padding=True,
         return_tensors='pt',
     )
-    input_ids = output['input_ids'].squeeze(0)
-    attention_mask = output['attention_mask'].squeeze(0)
-    eos_input_ids = torch.tensor([[self.tokenizer.eos_token_id]*input_ids.shape[0]])
+    input_ids = output['input_ids']
+
+    print('output:{}'.format(output))
+    print('cl input_ids:{}'.format(input_ids))
+
+    attention_mask = output['attention_mask']
+    eos_input_ids = torch.tensor([[tokenizer.eos_token_id]*input_ids.shape[0]])
     eos_attention = torch.tensor([[0]*input_ids.shape[0]])
     input_ids = torch.cat((input_ids, eos_input_ids.T), dim=1)
     attention_mask = torch.cat((attention_mask, eos_attention.T), dim=1)
     return input_ids.to(device), attention_mask.to(device)
 
-def get_cl_embeddings(history, cl_model, tokenizer, special_tokens, device):
+def get_cl_embeddings(history, cl_model, tokenizer, special_ids, device):
     full_text = ""
     cl_text = []
     for i, utterance in enumerate(history):
@@ -189,21 +192,27 @@ def get_cl_embeddings(history, cl_model, tokenizer, special_tokens, device):
             full_text += text + " "
             cl_text.append(text)
 
+    print('full_text :{}'.format(full_text))
+
     row = f"{tokenizer.bos_token} {full_text} {tokenizer.eos_token}"
     tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(row))
-    example = tokenizer.build_inputs_with_special_tokens(tokenized_text)
+    input_ids = tokenizer.build_inputs_with_special_tokens(tokenized_text)
+
+    print('special_tokens:{}'.format(special_ids))
 
     cl_embeddings = []
     eos_idxs = []
-    for tok in special_tokens[:2]:
-        eos_idxs += [i - 1 for i, x in enumerate(example) if x == tok]
-    eos_idxs += [len(example)]
+    for tok in special_ids[:2]:
+        eos_idxs += [i - 1 for i, x in enumerate(input_ids) if x == tok]
+    eos_idxs += [len(input_ids)]
     eos_idxs.sort()
     eos_idxs = eos_idxs[1:]
 
+    print('eos_idxs :{}\tlenght:{}'.format(eos_idxs,len(eos_idxs)))
+    print('cl_text :{}\tlenght：{}'.format(cl_text,len(cl_text)))
     assert len(eos_idxs) == len(cl_text)
 
-    cl_input_ids, cl_attention_mask = cl_tokenize(cl_text, device)
+    cl_input_ids, cl_attention_mask = cl_tokenize(tokenizer, cl_text, device)
     cl_feats = cl_model.forward(
         input_ids=cl_input_ids, attention_mask=cl_attention_mask)  # 1, feat_size
     last_idx = 0
@@ -211,12 +220,131 @@ def get_cl_embeddings(history, cl_model, tokenizer, special_tokens, device):
         cl_embeddings += [feat] * (eos_idx - last_idx)
         last_idx = eos_idx
 
-    return cl_embeddings, eos_idxs
+    return torch.tensor([input_ids]).to(device), cl_embeddings, eos_idxs
+
+def generter(model, history, cl_model, tokenizer, special_tokens, args, last_latent_mu, last_latent_std):
+    # Get all the CL feats
+    input_ids, cl_embeddings, end = get_cl_embeddings(history, cl_model, tokenizer, special_tokens, args.device)
+    print(cl_embeddings)
+    true_cl_feats = torch.stack(cl_embeddings)
+    print(true_cl_feats)
+    true_cl_feats = true_cl_feats[::args.split_sentences]
+    print(true_cl_feats)
+    print('input_ids:{}'.format(input_ids))
+    print('input_ids shape:{}'.format(input_ids.shape))
+
+    LABELS = ['TRUE CL', 'BRIDGE CL (DE)', 'RANDOM CL']
+    # INTERPOLATION - BRIDGE
+    B_T = np.random.normal(loc=last_latent_mu, scale=last_latent_std)
+
+    num_sentences = len(true_cl_feats)
+
+    print("Original num sentences: {}".format(len(end)))
+    print("Target num sentences: {}".format(num_sentences))
+    end_lengths = np.ones(len(end))
+    end_lengths = end_lengths.astype(np.int)
+    print("end_lengths :{}".format(end_lengths))
+
+    bridge_feats = simulate_brownian_bridge(
+        B_0=true_cl_feats[0], B_T=B_T, num_samples=num_sentences,
+        sentence_lengths=end_lengths
+    )
+
+    bridge_feats = torch.tensor(
+        bridge_feats, dtype=true_cl_feats.dtype).to(args.device)
+    # RANDOM
+    random_feats = torch.rand(true_cl_feats.shape).to(args.device)
+    feats = [true_cl_feats, bridge_feats, random_feats]
+
+    for seq_i, seq_cl_feats in enumerate(feats[:1]):
+        cl_feats = seq_cl_feats[0]  # Get the first sentence feat
+
+        # RESET THE CL INDEX
+        model.transformer._cur_cl_idx = 0
+        model.transformer._has_reset = False
+
+        if args.method == "sample":
+            output_sequences = model.generate(
+                input_ids=input_ids,
+                section_ids=None,
+                cl_feats=cl_feats,  # .to(args.device),
+                seq_cl_feats=seq_cl_feats,
+                max_length=args.max_length,
+                temperature=args.temperature,
+                top_k=args.k,
+                top_p=args.p,
+                repetition_penalty=args.repetition_penalty,
+                do_sample=True,
+                num_return_sequences=args.num_return_sequences,
+                bad_words_ids=args.bad_words_ids,
+                # List of token ids that are not allowed to be generated. In order to get the
+                # tokens of the words that should not appear in the generated text,
+                # use :obj:`tokenizer.encode(bad_word, add_prefix_space=True)`
+                min_length=args.min_length
+            )
+
+        # # NOTE GREEDY
+        elif args.method == "greedy":
+            output_sequences = model.generate(
+                input_ids=input_ids,
+                section_ids=None,
+                cl_feats=cl_feats,  # .to(args.device),
+                seq_cl_feats=seq_cl_feats,
+                max_length=args.max_length,
+                num_return_sequences=args.num_return_sequences,
+            )
+
+        # # NOTE Beam search
+        elif args.method == "beam":
+            output_sequences = model.generate(
+                input_ids=input_ids,
+                section_ids=None,
+                cl_feats=cl_feats,  # .to(args.device),
+                seq_cl_feats=seq_cl_feats,
+                max_length=args.max_length,
+                num_beams=5,
+                early_stopping=True,
+                num_return_sequences=args.num_return_sequences,
+                # no_repeat_ngram_size=2, # To avoid repetition
+            )
+        else:
+            raise ValueError("need to specify --method")
+
+        # Remove the batch dimension when returning multiple sequences
+        if len(output_sequences.shape) > 2:
+            output_sequences.squeeze_()
+
+        generate_res = []
+        for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
+            generated_sequence = generated_sequence.tolist()
+
+            # Decode text
+            # text = tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
+            text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
+
+            print('text: {}'.format(text))
+
+            # Remove all text after the stop token
+            stop_idx = []
+            for stop in args.stop_token:
+                if text.find(stop) != -1:
+                    if text.find(stop) != 0:
+                        stop_idx.append(text.find(stop))
+                    else:
+                        text = text[len(stop)+1:]
+                        stop_idx.append(text.find(stop))
+            stop_idx.sort()
+            print('stop_idx :{}'.format(stop_idx))
+            text = text[:stop_idx[0]]
+
+            print('text: {}'.format(text))
+
+            generate_res.append(text)
+        return generate_res
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True, help="Path to pre-trained model")
-    parser.add_argument("--train_path", default=None, type=str, required=True, help="Path train data")
     parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--stop_token", type=str, default=None, help="Token at which text generation is stopped")
     parser.add_argument("--temperature", type=float, default=1.0,
@@ -230,8 +358,8 @@ def main():
     parser.add_argument("--split-sentences", type=int, default=1)
     parser.add_argument("--multiply-sentences", type=int, default=1)
     parser.add_argument("--p", type=float, default=0.99)
+    parser.add_argument("--block_size", type=int, default=1024)
 
-    parser.add_argument("--prefix", type=str, default="", help="Text added prior to input.")
     parser.add_argument("--padding_text", type=str, default="", help="Deprecated, the use of `--prefix` is preferred.")
 
     parser.add_argument("--suppress_eos", action="store_true", default=False, help="Text added prior to input.")
@@ -245,7 +373,6 @@ def main():
     parser.add_argument("--latent_dim", type=int, default=3, help="random seed for initialization")
     parser.add_argument("--use_random_embs", action="store_true", help="Avoid using CUDA when available")
     parser.add_argument("--use_true_end_latent", action="store_true", help="Avoid using CUDA when available")
-    parser.add_argument("--label", type=str, default="", help="Text added prior to input.")
     parser.add_argument("--method", type=str, default="", help="Text added prior to input.")
     args = parser.parse_args()
 
@@ -253,68 +380,61 @@ def main():
     args.n_gpu = 0 if args.no_cuda else torch.cuda.device_count()
     args.use_section_null = 0
 
-    logger.warning(f"device: {args.device}, n_gpu: {args.n_gpu}, 16-bits training: {args.fp16}")
+    logger.warning(f"device: {args.device}, n_gpu: {args.n_gpu}")
 
     set_seed(args)
 
     # Initialize the model and tokenizer
-    model_class = GPT2TimeLMHeadModel
-    tokenizer_class = BertTokenizer
-    tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path)
-    model = model_class.from_pretrained(args.model_name_or_path)
+    tokenizer = BertTokenizer.from_pretrained(args.model_name_or_path)
+    model = GPT2TimeLMHeadModel.from_pretrained(args.model_name_or_path)
     model.to(args.device)
 
     model.transformer._config.use_contrastive_embeddings = True
 
-    SECTION_WOEDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(
+    SECTION_IDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(
         dataset_name=args.dataset_name, tokenizer=tokenizer)
 
     tokenizer.eos_token = '<|endoftext|>'
     tokenizer.bos_token = '<|endoftext|>'
     tokenizer.pad_token = tokenizer.eos_token
 
-    tokenizer.eos_token_id = tokenizer.convert_tokens_to_ids(
-        '<|endoftext|>')  # 修改id 50256->21130  hugging默认是50256，即英文模型大小
-    tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>')  # 修改id 50256->21130
-
     if args.suppress_eos:
-        bad_words_ids = [[tokenizer.eos_token_id]]  # 指定那些id不生成
+        args.bad_words_ids = [[tokenizer.eos_token_id]]  # 指定那些id不生成
     else:
-        bad_words_ids = None
+        args.bad_words_ids = None
 
-    model.transformer.special_tokens = SPECIAL_TOKENS
-    base_model = 'gpt2'
-    CL_MODEL = get_checkpoint(
-        dataset_name=args.dataset_name,
+    model.transformer.special_tokens = SECTION_IDS
+    cl_model = get_checkpoint(
         latent_dim=args.latent_dim,
         use_section_ids=True,
         token_size=len(tokenizer),
-        base_model=base_model,
         filepath=args.encoder_filepath
     )
-    CL_MODEL.to(args.device)
-    CL_MODEL.eval()
+    cl_model.to(args.device)
+    cl_model.eval()
 
     model.transformer._config.use_noisy_embeddings = False
     logger.info(args)
 
-    prompt_text = args.prompt if args.prompt else ""  # input("Model prompt >>> ")
+    args.prompt_text = args.prompt if args.prompt else ""  # input("Model prompt >>> ")
+    args.stop_token = [
+            '[ user ]',
+            '[ assistant ]',
+            '<|endoftext|>'
+        ]
 
     print(f'Args: {args}')
 
     train_dataset = EekeDataset(
         tokenizer=tokenizer,
-        special_words=SECTION_WOEDS,
+        special_words=SPECIAL_TOKENS,
         block_size=args.block_size,
-        cl_model=CL_MODEL,
+        cl_model=cl_model,
         data_names='train'
     )
 
-    max_length = args.max_length
-    min_length = args.min_length
-
     # Estimate dnesity for last sentence
-    _, _, last_latent_mu, last_latent_std = get_density(dataset=train_dataset, lm=model, cl_model=CL_MODEL)
+    _, _, last_latent_mu, last_latent_std = get_density(dataset=train_dataset, lm=model, cl_model=cl_model)
 
     print("last latent mu", last_latent_mu)
     print("last latent std", last_latent_std)
@@ -325,124 +445,13 @@ def main():
         while not raw_text:
             print('Prompt should not be empty!')
             raw_text = input(">>> ")
+        if raw_text == 'exit':
+            break
         history.append(raw_text)
+        out_text = generter(model, history, cl_model, tokenizer, SECTION_IDS, args, last_latent_mu, last_latent_std)
+        print(out_text)
+        history.append(out_text[0])
 
-        # Get all the CL feats
-        cl_embeddings, end = get_cl_embeddings(history, CL_MODEL, tokenizer, SECTION_WOEDS, args.device)
-        true_cl_feats = torch.stack(cl_embeddings)
-        true_cl_feats = true_cl_feats[::args.split_sentences]
-
-        LABELS = ['TRUE CL', 'BRIDGE CL (DE)', 'RANDOM CL']
-        # INTERPOLATION - BRIDGE
-        B_T = np.random.normal(loc=last_latent_mu, scale=last_latent_std)
-
-        num_sentences = len(true_cl_feats)
-
-        print("Original num sentences: {}".format(len(end)))
-        print("Target num sentences: {}".format(num_sentences))
-        end_lengths = [end[i] if i == 0 else end[i + 1] - end[i] for i in range(len(end) - 1)] # [19,49,89,102,112] -> [19,40,13,10]
-        end_lengths = (np.array(end_lengths) * (num_sentences / len(end)))
-        end_lengths = np.ones(end_lengths.shape)
-        end_lengths = end_lengths.astype(np.int)
-
-        bridge_feats = simulate_brownian_bridge(
-            B_0=true_cl_feats[0], B_T=B_T, num_samples=num_sentences,
-            sentence_lengths=end_lengths
-        )
-
-        bridge_feats = torch.tensor(
-            bridge_feats, dtype=true_cl_feats.dtype).to(args.device)
-        # RANDOM
-        random_feats = torch.rand(true_cl_feats.shape).to(args.device)
-        feats = [true_cl_feats, bridge_feats, random_feats]
-
-        for seq_i, seq_cl_feats in enumerate(feats):
-            cl_feats = seq_cl_feats[0]  # Get the first sentence feat
-            prefix = args.prefix if args.prefix else args.padding_text
-            encoded_prompt = tokenizer.encode(prefix + prompt_text, add_special_tokens=True, return_tensors="pt")
-            encoded_prompt = encoded_prompt.to(args.device)
-
-            if encoded_prompt.size()[-1] == 0:
-                input_ids = None
-            else:
-                input_ids = encoded_prompt
-
-            # RESET THE CL INDEX
-            model.transformer._cur_cl_idx = 0
-            model.transformer._has_reset = False
-
-            if args.method == "sample":
-                output_sequences = model.generate(
-                    input_ids=input_ids,
-                    section_ids=None,
-                    cl_feats=cl_feats,  # .to(args.device),
-                    seq_cl_feats=seq_cl_feats,
-                    max_length=max_length,
-                    temperature=args.temperature,
-                    top_k=args.k,
-                    top_p=args.p,
-                    repetition_penalty=args.repetition_penalty,
-                    do_sample=True,
-                    num_return_sequences=args.num_return_sequences,
-                    bad_words_ids=bad_words_ids,
-                    # List of token ids that are not allowed to be generated. In order to get the
-                    # tokens of the words that should not appear in the generated text,
-                    # use :obj:`tokenizer.encode(bad_word, add_prefix_space=True)`
-                    min_length=min_length
-                )
-
-            # # NOTE GREEDY
-            elif args.method == "greedy":
-                output_sequences = model.generate(
-                    input_ids=input_ids,
-                    section_ids=None,
-                    cl_feats=cl_feats,  # .to(args.device),
-                    seq_cl_feats=seq_cl_feats,
-                    max_length=max_length,
-                    num_return_sequences=args.num_return_sequences,
-                )
-
-            # # NOTE Beam search
-            elif args.method == "beam":
-                output_sequences = model.generate(
-                    input_ids=input_ids,
-                    section_ids=None,
-                    cl_feats=cl_feats,  # .to(args.device),
-                    seq_cl_feats=seq_cl_feats,
-                    max_length=max_length,
-                    num_beams=5,
-                    early_stopping=True,
-                    num_return_sequences=args.num_return_sequences,
-                    # no_repeat_ngram_size=2, # To avoid repetition
-                )
-            else:
-                raise ValueError("need to specify --method")
-
-            # Remove the batch dimension when returning multiple sequences
-            if len(output_sequences.shape) > 2:
-                output_sequences.squeeze_()
-
-            for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
-                # print(f"=== GENERATED SEQUENCE {generated_sequence_idx + 1} ===")
-                generated_sequence = generated_sequence.tolist()
-
-                print("Generated length: {}".format(len(generated_sequence)))
-
-                # Decode text
-                # text = tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
-                text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
-
-                # Remove all text after the stop token
-                text = text[: text.find(args.stop_token) if args.stop_token else None]
-
-                print('==============generated sequence: {}================='.format(text))
-
-                # Add the prompt at the beginning of the sequence. Remove the excess text that was used for pre-processing
-                total_sequence = (
-                        prompt_text + text[len(tokenizer.decode(encoded_prompt[0], skip_special_tokens=True)):]
-                )
-
-                print("[ GENERATED FOR {} ]: {}".format(LABELS[seq_i], total_sequence))
 
 
 if __name__ == "__main__":

@@ -421,12 +421,14 @@ def main():
             ratio = 1.0
 
         print("Original num sentences: {}".format(len(end)))
+        print("Original sentences: {}".format(end))
         print("Target num sentences: {}".format(num_sentences))
-        print("min length", min_length)
+        print("min length ：{}".format(min_length))
         end_lengths = [end[i] if i == 0 else end[i+1] - end[i] for i in range(len(end)-1)]
         end_lengths = (np.array(end_lengths)*(num_sentences/len(end)))
         end_lengths = np.ones(end_lengths.shape)
         end_lengths = end_lengths.astype(np.int)
+        print("end_lengths :{}".format(end_lengths))
 
         # if 'tc' in args.encoder_filepath:
         bridge_feats = simulate_brownian_bridge(
