@@ -335,9 +335,10 @@ def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
     SECTION_IDS = []
     if 'erke' in dataset_name:
         SECTION_IDS = [
-            '[ user ]',
-            '[ assistant ]',
-            '<|endoftext|>'
+            '[user]',
+            '[assistant]',
+            '<|endoftext|>',
+            # '[next]'
         ]
 
     if 'tickettalk' in dataset_name:
@@ -476,6 +477,8 @@ def main():
 
     config.eos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>') # 修改id 50256->21130  hugging默认是50256，即英文模型大小
     config.bos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>') # 修改id 50256->21130
+    print('tokenizer.eos_token_id:{}'.format(tokenizer.eos_token_id))
+    print('tokenizer.bos_token_id:{}'.format(tokenizer.bos_token_id))
 
     print('=============================here here here========================')
     print(config)

@@ -927,15 +927,16 @@ class GPT2TimeModel(GPT2PreTrainedModel):
 
         # Do section embeddings
         if self._config.use_section_ids:
-            if self._config.use_contrastive_embeddings:
-                raise ValueError("contrastive embeddings should not be used at same time as section ids")
+            # if self._config.use_contrastive_embeddings:
+            #     raise ValueError("contrastive embeddings should not be used at same time as section ids")
             # section ids = [batch_size, 1]
             section_ids = self._get_section_ids(input_ids=input_ids, section_ids=section_ids,
                                                 seq_section_ids=seq_section_ids)
-            if hasattr(self._config, "use_section_null") and self._config.use_section_null:
-                section_embeds = self.sectionNull2e(section_ids)
-            else:
-                section_embeds = self.section2e(section_ids)
+            # if hasattr(self._config, "use_section_null") and self._config.use_section_null:
+            #     section_embeds = self.sectionNull2e(section_ids)
+            # else:
+            #     section_embeds = self.section2e(section_ids)
+            section_embeds = self.wte(section_ids)
             hidden_states = hidden_states + section_embeds
 
         if token_type_ids is not None:

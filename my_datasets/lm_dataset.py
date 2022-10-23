@@ -113,10 +113,10 @@ class EekeDataset():
 
         if self.train:
             print('==============loading erke train data==============')
-            self.data_files = ['train.json']
+            self.data_files = ['valid-.json']
         else:
             print('==============loading erke valid data==============')
-            self.data_files = ['valid.json']
+            self.data_files = ['valid-.json']
 
         self.all_data = json.load(open(os.path.join(self.data_dir, self.data_files[0]), 'rb'))
 
@@ -127,32 +127,47 @@ class EekeDataset():
         conversation = self.all_data[index]
         full_text = ""
         cl_text = []
+        segment_ids = []
+        user_id = self.tokenizer.convert_tokens_to_ids('[user]')
+        assistant_id = self.tokenizer.convert_tokens_to_ids('[assistant]')
+        segment_ids.append(self.tokenizer.bos_token_id)
+        # print('user_id :{}'.format(user_id))
+        # print('assistant_id :{}'.format(assistant_id))
+
         for sentence_counter, utterance in enumerate(conversation['utterances']):
-            text = "[ {} ] {}".format(utterance['speaker'].upper(), utterance['text'])
+            text = "[{}] {}".format(utterance['speaker'].upper(), utterance['text'])
             full_text += text + " "
             cl_text.append(text)
+            if utterance['speaker'] == 'user':
+                segment_ids.extend([user_id] * len(self.tokenizer.tokenize(text)))
+            elif utterance['speaker'] == 'assistant' :
+                segment_ids.extend([assistant_id] * len(self.tokenizer.tokenize(text)))
+        segment_ids.append(self.tokenizer.eos_token_id)
 
         row = f"{self.tokenizer.bos_token} {full_text} {self.tokenizer.eos_token}"
+        section_ids = segment_ids
         tokenized_text = self.tokenizer.convert_tokens_to_ids(
             self.tokenizer.tokenize(row))
+
+        # print('row :{}'.format(row))
+        # print('tokenized_text :{}'.format(tokenized_text))
+        # print('section_ids :{}'.format(section_ids))
+
         if len(tokenized_text) >= self.block_size:
             print('--------------跳过case too long----------------')
             return self.__getitem__(index+1)
         else:
-            example = self.tokenizer.build_inputs_with_special_tokens(
-                tokenized_text)  # 在头尾分别添加[CLS]和[SEP] token
-            section_ids = [0]
-            cl_embeddings = self.get_cl_embeddings(example, cl_text)
+            cl_embeddings = self.get_cl_embeddings(tokenized_text, cl_text)
             if cl_embeddings == 0:
                 print('--------------跳过case----------------')
                 return self.__getitem__(index + 1)
-            labels = copy.deepcopy(example)
+            labels = copy.deepcopy(tokenized_text)
 
-        return (torch.tensor(example, dtype=torch.long),
+        return (torch.tensor(tokenized_text, dtype=torch.long),
                 torch.tensor(labels, dtype=torch.long),
                 torch.tensor(section_ids, dtype=torch.long),
                 torch.stack(cl_embeddings).to(self.cpu_device),
-                full_text
+                full_text,
                 )
 
     def cl_tokenize(self, text, device):
