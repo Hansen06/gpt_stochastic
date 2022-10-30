@@ -244,16 +244,7 @@ def get_dataset(
     special_words: list,
     data_names,
 ):
-    if "wikisection" in args.dataset_name:
-        dataset = WikisectionDataset(
-            tokenizer=tokenizer,
-            file_path=file_path,
-            use_section_null=args.use_section_null,
-            special_words=special_words,
-            block_size=args.block_size,
-            cl_model=cl_model
-        )
-    elif 'tickettalk' in args.dataset_name:
+    if 'tickettalk' in args.dataset_name:
         dataset = TaskmasterDataset(
             tokenizer=tokenizer,
             file_path=file_path,
@@ -334,11 +325,12 @@ def get_checkpoint(dataset_name, latent_dim, base_model="gpt2",
 def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
     SECTION_IDS = []
     if 'erke' in dataset_name:
+        #['[ USER ]', '[ ASSISTANT ]', '[ <|ENDOFTEXT|> ]', '[ [NEXT] ]']
         SECTION_IDS = [
-            '[user]',
-            '[assistant]',
-            '<|endoftext|>',
-            # '[next]'
+            '[ user ]',
+            '[ assistant ]',
+            '[ <|endoftext|> ]',
+            '[ [next] ]'
         ]
 
     if 'tickettalk' in dataset_name:
@@ -471,12 +463,12 @@ def main():
     # -1 because of the added " . "
     config.max_num_sections = len(SECTION_IDS) - 1
 
-    tokenizer.eos_token = '<|endoftext|>'
-    tokenizer.bos_token = '<|endoftext|>'
+    tokenizer.eos_token = '[ <|endoftext|> ]'
+    tokenizer.bos_token = '[ <|endoftext|> ]'
     tokenizer.pad_token = tokenizer.eos_token
 
-    config.eos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>') # 修改id 50256->21130  hugging默认是50256，即英文模型大小
-    config.bos_token_id = tokenizer.convert_tokens_to_ids('<|endoftext|>') # 修改id 50256->21130
+    config.eos_token_id = tokenizer.convert_tokens_to_ids('[ <|endoftext|> ]') # 修改id 50256->21130  hugging默认是50256，即英文模型大小
+    config.bos_token_id = tokenizer.convert_tokens_to_ids('[ <|endoftext|> ]') # 修改id 50256->21130
     print('tokenizer.eos_token_id:{}'.format(tokenizer.eos_token_id))
     print('tokenizer.bos_token_id:{}'.format(tokenizer.bos_token_id))
 

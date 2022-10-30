@@ -92,12 +92,13 @@ def get_special_tokens(dataset_name, tokenizer, add_tokens=True):
     SPECIAL_TOKENS = []
     if 'erke' in dataset_name:
         SPECIAL_TOKENS = [
-            '[ user ]',
-            '[ assistant ]',
-            '<|endoftext|>'
+            '[ user ]', #21128
+            '[ assistant ]', #21129
+            '[ <|endoftext|> ]', #21130
+            '[ [next] ]' #21131
         ]
 
-    SPECIAL_TOKENS += [' . ']
+    SPECIAL_TOKENS += [' . '] #21132
     if add_tokens:
         # NOTE loading previous tokenizer sometimes already includes the new tokens
         eos = tokenizer(' . ')['input_ids']
@@ -182,21 +183,40 @@ def cl_tokenize(tokenizer, text, device):
 def get_cl_embeddings(history, cl_model, tokenizer, special_ids, device):
     full_text = ""
     cl_text = []
+
+    token_type_ids = []
+    user_id = tokenizer.convert_tokens_to_ids('[ user ]')
+    assistant_id = tokenizer.convert_tokens_to_ids('[ assistant ]')
+    token_type_ids.append(tokenizer.bos_token_id)
+
     for i, utterance in enumerate(history):
+        sp = utterance.split('[next]')
+        new_txt = []
+        for i, line in enumerate(sp):
+            if i != len(sp) - 1:
+                new_txt.append(line)
+                new_txt.append(' [ [next] ] ')
+            else:
+                new_txt.append(line)
         if i % 2 == 0:
-            text = "[ {} ] {}".format('USER', utterance)
+            text = "[ {} ] {}".format('USER', ''.join(new_txt))
             full_text += text + " "
             cl_text.append(text)
+            token_type_ids.extend([user_id] * len(tokenizer.tokenize(text)))
         else:
-            text = "[ {} ] {}".format('ASSISTANT', utterance)
+            text = "[ {} ] {}".format('ASSISTANT', ''.join(new_txt))
             full_text += text + " "
             cl_text.append(text)
+            token_type_ids.extend([assistant_id] * len(tokenizer.tokenize(text)))
+
+    token_type_ids.append(tokenizer.eos_token_id)
 
     print('full_text :{}'.format(full_text))
 
     row = f"{tokenizer.bos_token} {full_text} {tokenizer.eos_token}"
-    tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(row))
-    input_ids = tokenizer.build_inputs_with_special_tokens(tokenized_text)
+    print('=========row text:{}'.format(row))
+    input_ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(row))
+    # input_ids = tokenizer.build_inputs_with_special_tokens(tokenized_text)
 
     print('special_tokens:{}'.format(special_ids))
 
@@ -220,11 +240,11 @@ def get_cl_embeddings(history, cl_model, tokenizer, special_ids, device):
         cl_embeddings += [feat] * (eos_idx - last_idx)
         last_idx = eos_idx
 
-    return torch.tensor([input_ids]).to(device), cl_embeddings, eos_idxs
+    return torch.tensor([input_ids]).to(device), cl_embeddings, eos_idxs, torch.tensor([token_type_ids]).to(device)
 
 def generter(model, history, cl_model, tokenizer, special_tokens, args, last_latent_mu, last_latent_std):
     # Get all the CL feats
-    input_ids, cl_embeddings, end = get_cl_embeddings(history, cl_model, tokenizer, special_tokens, args.device)
+    input_ids, cl_embeddings, end, token_type_ids = get_cl_embeddings(history, cl_model, tokenizer, special_tokens, args.device)
     print(cl_embeddings)
     true_cl_feats = torch.stack(cl_embeddings)
     print(true_cl_feats)
@@ -232,6 +252,8 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
     print(true_cl_feats)
     print('input_ids:{}'.format(input_ids))
     print('input_ids shape:{}'.format(input_ids.shape))
+    print('token_type_ids:{}'.format(token_type_ids))
+    print('token_type_ids shape:{}'.format(token_type_ids.shape))
 
     LABELS = ['TRUE CL', 'BRIDGE CL (DE)', 'RANDOM CL']
     # INTERPOLATION - BRIDGE
@@ -266,7 +288,7 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
         if args.method == "sample":
             output_sequences = model.generate(
                 input_ids=input_ids,
-                section_ids=None,
+                token_type_ids=token_type_ids,
                 cl_feats=cl_feats,  # .to(args.device),
                 seq_cl_feats=seq_cl_feats,
                 max_length=args.max_length,
@@ -287,7 +309,7 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
         elif args.method == "greedy":
             output_sequences = model.generate(
                 input_ids=input_ids,
-                section_ids=None,
+                token_type_ids=token_type_ids,
                 cl_feats=cl_feats,  # .to(args.device),
                 seq_cl_feats=seq_cl_feats,
                 max_length=args.max_length,
@@ -298,7 +320,7 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
         elif args.method == "beam":
             output_sequences = model.generate(
                 input_ids=input_ids,
-                section_ids=None,
+                token_type_ids=token_type_ids,
                 cl_feats=cl_feats,  # .to(args.device),
                 seq_cl_feats=seq_cl_feats,
                 max_length=args.max_length,
@@ -322,7 +344,7 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
             # text = tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
             text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
 
-            print('text: {}'.format(text))
+            print('========before generate text: {}==========='.format(text))
 
             # Remove all text after the stop token
             stop_idx = []
@@ -336,8 +358,6 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
             stop_idx.sort()
             print('stop_idx :{}'.format(stop_idx))
             text = text[:stop_idx[0]]
-
-            print('text: {}'.format(text))
 
             generate_res.append(text)
         return generate_res
@@ -394,9 +414,14 @@ def main():
     SECTION_IDS, SPECIAL_TOKENS, tokenizer = get_special_tokens(
         dataset_name=args.dataset_name, tokenizer=tokenizer)
 
-    tokenizer.eos_token = '<|endoftext|>'
-    tokenizer.bos_token = '<|endoftext|>'
+    tokenizer.eos_token = '[ <|endoftext|> ]'
+    tokenizer.bos_token = '[ <|endoftext|> ]'
     tokenizer.pad_token = tokenizer.eos_token
+
+    # tokenizer.eos_token_id = tokenizer.convert_tokens_to_ids('[ <|endoftext|> ]')  # 修改id 50256->21130  hugging默认是50256，即英文模型大小
+    # tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids('[ <|endoftext|> ]')  # 修改id 50256->21130
+    print('tokenizer.eos_token_id:{}'.format(tokenizer.eos_token_id))
+    print('tokenizer.bos_token_id:{}'.format(tokenizer.bos_token_id))
 
     if args.suppress_eos:
         args.bad_words_ids = [[tokenizer.eos_token_id]]  # 指定那些id不生成
@@ -420,7 +445,7 @@ def main():
     args.stop_token = [
             '[ user ]',
             '[ assistant ]',
-            '<|endoftext|>'
+            '[ <|endoftext|> ]'
         ]
 
     print(f'Args: {args}')
@@ -449,7 +474,7 @@ def main():
             break
         history.append(raw_text)
         out_text = generter(model, history, cl_model, tokenizer, SECTION_IDS, args, last_latent_mu, last_latent_std)
-        print(out_text)
+        print('out_text: {}'.format(out_text))
         history.append(out_text[0])
 
 

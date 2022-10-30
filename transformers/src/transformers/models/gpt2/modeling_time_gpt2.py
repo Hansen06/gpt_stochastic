@@ -590,7 +590,7 @@ class GPT2TimeModel(GPT2PreTrainedModel):
         if hasattr(config, "cl_latent_dim") and config.cl_latent_dim is not None:
             self.cl2e = nn.Linear(config.cl_latent_dim, self.embed_dim)
 
-        # self.cl_tokenizer = GPT2Tokenizer.from_pretrained(constants.PATH2GPT)
+        # self.cl_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
         self.cl_tokenizer = BertTokenizer.from_pretrained(constants.PATH2GPT)
         self.cl_tokenizer.pad_token = self.cl_tokenizer.eos_token
         self.cl_end_token = self.cl_tokenizer.eos_token_id
@@ -918,6 +918,7 @@ class GPT2TimeModel(GPT2PreTrainedModel):
         if self._config.use_contrastive_embeddings:
             if self._config.use_section_ids:
                 raise ValueError("contrastive embeddings should not be used at same time as section ids")
+            # print('cl_feats: {}'.format(cl_feats))
             cl_embeds = self._get_cl_embeddings(raw_text=raw_text,
                                                 cl_feats=cl_feats,
                                                 seq_cl_feats=seq_cl_feats,
@@ -927,19 +928,20 @@ class GPT2TimeModel(GPT2PreTrainedModel):
 
         # Do section embeddings
         if self._config.use_section_ids:
-            # if self._config.use_contrastive_embeddings:
-            #     raise ValueError("contrastive embeddings should not be used at same time as section ids")
+            if self._config.use_contrastive_embeddings:
+                raise ValueError("contrastive embeddings should not be used at same time as section ids")
             # section ids = [batch_size, 1]
             section_ids = self._get_section_ids(input_ids=input_ids, section_ids=section_ids,
                                                 seq_section_ids=seq_section_ids)
-            # if hasattr(self._config, "use_section_null") and self._config.use_section_null:
-            #     section_embeds = self.sectionNull2e(section_ids)
-            # else:
-            #     section_embeds = self.section2e(section_ids)
-            section_embeds = self.wte(section_ids)
+            if hasattr(self._config, "use_section_null") and self._config.use_section_null:
+                section_embeds = self.sectionNull2e(section_ids)
+            else:
+                section_embeds = self.section2e(section_ids)
             hidden_states = hidden_states + section_embeds
 
         if token_type_ids is not None:
+            # print('token_type_ids: {}'.format(token_type_ids))
+            # print('token_type_ids.shape: {}'.format(token_type_ids.shape))
             token_type_embeds = self.wte(token_type_ids)
             hidden_states = hidden_states + token_type_embeds
 
@@ -1199,7 +1201,7 @@ class GPT2TimeLMHeadModel(GPT2PreTrainedModel):
             shift_logits = lm_logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
+            loss_fct = CrossEntropyLoss(ignore_index=-1)
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
         if not return_dict:

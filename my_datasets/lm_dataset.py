@@ -21,19 +21,18 @@ from collections import defaultdict
 import constants
 
 
-
 class TextDataset(Dataset):
     """
     This will be superseded by a framework-agnostic approach soon.
     """
 
     def __init__(
-        self,
-        tokenizer,
-        file_path: str,
-        block_size: int,
-        overwrite_cache=False,
-        cache_dir: Optional[str] = None,
+            self,
+            tokenizer,
+            file_path: str,
+            block_size: int,
+            overwrite_cache=False,
+            cache_dir: Optional[str] = None,
     ):
 
         assert os.path.isfile(file_path), f"Input file path {file_path} not found"
@@ -66,7 +65,7 @@ class TextDataset(Dataset):
 
                 for i in range(0, len(tokenized_text) - block_size + 1, block_size):  # Truncate in block of block_size
                     self.examples.append(
-                        tokenizer.build_inputs_with_special_tokens(tokenized_text[i : i + block_size])
+                        tokenizer.build_inputs_with_special_tokens(tokenized_text[i: i + block_size])
                     )
                 # Note that we are losing the last truncated example here for the sake of simplicity (no padding)
                 # If your dataset is small, first you should look for a bigger one :-) and second you
@@ -94,7 +93,7 @@ class EekeDataset():
                  tokenizer,
                  block_size: int,
                  use_section_null: bool,
-                 special_words:list,
+                 special_words: list,
                  data_dir=constants.PATH2Erke,
                  data_names: str = 'wikihow'
                  ):
@@ -127,45 +126,73 @@ class EekeDataset():
         conversation = self.all_data[index]
         full_text = ""
         cl_text = []
-        segment_ids = []
-        user_id = self.tokenizer.convert_tokens_to_ids('[user]')
-        assistant_id = self.tokenizer.convert_tokens_to_ids('[assistant]')
-        segment_ids.append(self.tokenizer.bos_token_id)
+        token_type_ids = []
+        labels = []
+        user_id = self.tokenizer.convert_tokens_to_ids('[ user ]')
+        assistant_id = self.tokenizer.convert_tokens_to_ids('[ assistant ]')
+        token_type_ids.append(self.tokenizer.bos_token_id)
+        labels.append(-1)
         # print('user_id :{}'.format(user_id))
         # print('assistant_id :{}'.format(assistant_id))
 
-        for sentence_counter, utterance in enumerate(conversation['utterances']):
-            text = "[{}] {}".format(utterance['speaker'].upper(), utterance['text'])
+        for sen_count, utterance in enumerate(conversation['utterances']):
+            sp = utterance['text'].split('[next]')
+            new_txt = []
+            for i, line in enumerate(sp):
+                if i != len(sp) - 1:
+                    new_txt.append(line)
+                    new_txt.append(' [ [next] ] ')
+                else:
+                    new_txt.append(line)
+
+            text = "[ {} ] {}".format(utterance['speaker'].upper(), ''.join(new_txt))
+            text_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
+            # print('text_ids: {}'.format(text_ids))
+
             full_text += text + " "
             cl_text.append(text)
             if utterance['speaker'] == 'user':
-                segment_ids.extend([user_id] * len(self.tokenizer.tokenize(text)))
-            elif utterance['speaker'] == 'assistant' :
-                segment_ids.extend([assistant_id] * len(self.tokenizer.tokenize(text)))
-        segment_ids.append(self.tokenizer.eos_token_id)
+                token_type_ids.extend([user_id] * len(self.tokenizer.tokenize(text)))
+                if sen_count != len(conversation['utterances']) - 1:
+                    labels.extend([-1] * len(self.tokenizer.tokenize(text)))
+                else:
+                    labels.extend(text_ids)
+
+            elif utterance['speaker'] == 'assistant':
+                token_type_ids.extend([assistant_id] * len(self.tokenizer.tokenize(text)))
+                if sen_count != len(conversation['utterances']) - 1:
+                    labels.extend([-1] * len(self.tokenizer.tokenize(text)))
+                else:
+                    labels.extend(text_ids)
+
+        token_type_ids.append(self.tokenizer.eos_token_id)
+        labels.append(self.tokenizer.eos_token_id)
+
+        # print('labels : {}'.format(labels))
+        # print('labels.len : {}'.format(len(labels)))
+        # print('token_type_ids.len : {}'.format(len(token_type_ids)))
 
         row = f"{self.tokenizer.bos_token} {full_text} {self.tokenizer.eos_token}"
-        section_ids = segment_ids
-        tokenized_text = self.tokenizer.convert_tokens_to_ids(
+        input_ids = self.tokenizer.convert_tokens_to_ids(
             self.tokenizer.tokenize(row))
 
         # print('row :{}'.format(row))
         # print('tokenized_text :{}'.format(tokenized_text))
         # print('section_ids :{}'.format(section_ids))
 
-        if len(tokenized_text) >= self.block_size:
+        if len(input_ids) >= self.block_size:
             print('--------------跳过case too long----------------')
-            return self.__getitem__(index+1)
+            return self.__getitem__(index + 1)
         else:
-            cl_embeddings = self.get_cl_embeddings(tokenized_text, cl_text)
+            cl_embeddings = self.get_cl_embeddings(input_ids, cl_text)
             if cl_embeddings == 0:
                 print('--------------跳过case----------------')
                 return self.__getitem__(index + 1)
-            labels = copy.deepcopy(tokenized_text)
+            # labels = copy.deepcopy(input_ids)
 
-        return (torch.tensor(tokenized_text, dtype=torch.long),
+        return (torch.tensor(input_ids, dtype=torch.long),
                 torch.tensor(labels, dtype=torch.long),
-                torch.tensor(section_ids, dtype=torch.long),
+                torch.tensor(token_type_ids, dtype=torch.long),
                 torch.stack(cl_embeddings).to(self.cpu_device),
                 full_text,
                 )
@@ -178,8 +205,8 @@ class EekeDataset():
         )
         input_ids = output['input_ids'].squeeze(0)
         attention_mask = output['attention_mask'].squeeze(0)
-        eos_input_ids = torch.tensor([[self.tokenizer.eos_token_id]*input_ids.shape[0]])
-        eos_attention = torch.tensor([[0]*input_ids.shape[0]])
+        eos_input_ids = torch.tensor([[self.tokenizer.eos_token_id] * input_ids.shape[0]])
+        eos_attention = torch.tensor([[0] * input_ids.shape[0]])
         input_ids = torch.cat((input_ids, eos_input_ids.T), dim=1)
         attention_mask = torch.cat((attention_mask, eos_attention.T), dim=1)
         return input_ids.to(device), attention_mask.to(device)
@@ -187,7 +214,7 @@ class EekeDataset():
     def get_end_points(self, tokenized_example):
         eos_idxs = []
         for tok in self.special_tokens[:2]:
-            eos_idxs += [i-1 for i, x in enumerate(tokenized_example) if x == tok]
+            eos_idxs += [i - 1 for i, x in enumerate(tokenized_example) if x == tok]
         eos_idxs += [len(tokenized_example)]
         eos_idxs.sort()
         eos_idxs = eos_idxs[1:]
@@ -207,7 +234,7 @@ class EekeDataset():
 
         cl_input_ids, cl_attention_mask = self.cl_tokenize(cl_text, self.device)
         cl_feats = self.cl_model.forward(
-            input_ids=cl_input_ids, attention_mask=cl_attention_mask) # 1, feat_size
+            input_ids=cl_input_ids, attention_mask=cl_attention_mask)  # 1, feat_size
         # Align feats to the sentence length
         last_idx = 0
         for eos_idx, feat in zip(eos_idxs, cl_feats):
@@ -223,5 +250,3 @@ class EekeDataset():
 
     def __len__(self):
         return len(self.all_data)
-
-
