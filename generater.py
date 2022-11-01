@@ -265,8 +265,12 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
     end_lengths = end_lengths.astype(np.int)
     print("end_lengths :{}".format(end_lengths))
 
+    B_0 = true_cl_feats[-2] # 取上一次医生的话作为起始状态
+    end_lengths = np.ones(3)
+    end_lengths = end_lengths.astype(np.int)
+
     bridge_feats = simulate_brownian_bridge(
-        B_0=true_cl_feats[0], B_T=B_T, num_samples=num_sentences,
+        B_0=B_0, B_T=B_T, num_samples=num_sentences,
         sentence_lengths=end_lengths
     ) #根据起始状态和最终状态生成整个布朗桥
 
