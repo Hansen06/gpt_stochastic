@@ -129,10 +129,12 @@ class EekeDataset():
 
         if self.train:
             print('==============loading erke train data==============')
-            self.data_files = ['valid-.json']
+            # self.data_files = ['valid-.json']
+            self.data_files = ['train-.txt']
         else:
             print('==============loading erke valid data==============')
-            self.data_files = ['valid-.json']
+            # self.data_files = ['valid-.json']
+            self.data_files = ['valid-.txt']
 
         self.tokenizer = tokenizer
         self.examples = []
@@ -168,7 +170,11 @@ class EekeDataset():
         doc_counter = 0
         # self.lengths = defaultdict(lambda: [])
         for fname in self.data_files:
-            data = json.load(open(os.path.join(self.data_dir, fname), 'rb'))
+            data = []
+            with open(os.path.join(self.data_dir, fname), 'r', encoding='utf-8') as f:
+                for line in f.readlines():
+                    data.append(line.strip())
+
             for conversation in data:
                 full_text = ""
                 cl_text = []
@@ -179,8 +185,9 @@ class EekeDataset():
                 token_type_ids.append(self.tokenizer.bos_token_id)
                 labels.append(-1)
 
-                for sentence_counter, utterance in enumerate(conversation['utterances']):
-                    sp = utterance['text'].split('[next]')
+                conversation = conversation.strip().split('\t')
+                for sentence_counter, utterance in enumerate(conversation):
+                    sp = utterance.split('[next]')
                     new_txt = []
                     for i, line in enumerate(sp):
                         if i != len(sp) - 1:
@@ -189,19 +196,23 @@ class EekeDataset():
                         else:
                             new_txt.append(line)
 
-                    text = "[ {} ] {}".format(utterance['speaker'].upper(), ''.join(new_txt))
+                    if sentence_counter % 2 == 0:
+                        text = "[ {} ] {}".format('user'.upper(), ''.join(new_txt))
+                    else:
+                        text = "[ {} ] {}".format('assistant'.upper(), ''.join(new_txt))
+
                     text_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
                     full_text += text + " "
                     cl_text.append(text)
-                    if utterance['speaker'] == 'user':
+                    if sentence_counter % 2 == 0: #患者
                         token_type_ids.extend([user_id] * len(self.tokenizer.tokenize(text)))
-                        if sentence_counter != len(conversation['utterances']) - 1:
+                        if sentence_counter != len(conversation) - 1:
                             labels.extend([-1] * len(self.tokenizer.tokenize(text)))
                         else:
                             labels.extend(text_ids)
-                    elif utterance['speaker'] == 'assistant':
+                    else:
                         token_type_ids.extend([assistant_id] * len(self.tokenizer.tokenize(text)))
-                        if sentence_counter != len(conversation['utterances']) - 1:
+                        if sentence_counter != len(conversation) - 1:
                             labels.extend([-1] * len(self.tokenizer.tokenize(text)))
                         else:
                             labels.extend(text_ids)

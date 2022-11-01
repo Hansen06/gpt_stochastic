@@ -198,7 +198,7 @@ def get_cl_embeddings(history, cl_model, tokenizer, special_ids, device):
                 new_txt.append(' [ [next] ] ')
             else:
                 new_txt.append(line)
-        if i % 2 == 0:
+        if i % 2 == 0: #患者
             text = "[ {} ] {}".format('USER', ''.join(new_txt))
             full_text += text + " "
             cl_text.append(text)
@@ -214,7 +214,7 @@ def get_cl_embeddings(history, cl_model, tokenizer, special_ids, device):
     print('full_text :{}'.format(full_text))
 
     row = f"{tokenizer.bos_token} {full_text} {tokenizer.eos_token}"
-    print('=========row text:{}'.format(row))
+    print('row text:{}'.format(row))
     input_ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(row))
     # input_ids = tokenizer.build_inputs_with_special_tokens(tokenized_text)
 
@@ -245,11 +245,9 @@ def get_cl_embeddings(history, cl_model, tokenizer, special_ids, device):
 def generter(model, history, cl_model, tokenizer, special_tokens, args, last_latent_mu, last_latent_std):
     # Get all the CL feats
     input_ids, cl_embeddings, end, token_type_ids = get_cl_embeddings(history, cl_model, tokenizer, special_tokens, args.device)
-    print(cl_embeddings)
+    # print(cl_embeddings)
     true_cl_feats = torch.stack(cl_embeddings)
-    print(true_cl_feats)
-    true_cl_feats = true_cl_feats[::args.split_sentences]
-    print(true_cl_feats)
+    # print(true_cl_feats)
     print('input_ids:{}'.format(input_ids))
     print('input_ids shape:{}'.format(input_ids.shape))
     print('token_type_ids:{}'.format(token_type_ids))
@@ -270,15 +268,15 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
     bridge_feats = simulate_brownian_bridge(
         B_0=true_cl_feats[0], B_T=B_T, num_samples=num_sentences,
         sentence_lengths=end_lengths
-    )
+    ) #根据起始状态和最终状态生成整个布朗桥
 
     bridge_feats = torch.tensor(
         bridge_feats, dtype=true_cl_feats.dtype).to(args.device)
     # RANDOM
-    random_feats = torch.rand(true_cl_feats.shape).to(args.device)
+    random_feats = torch.rand(true_cl_feats.shape).to(args.device) # 随机生成布朗桥
     feats = [true_cl_feats, bridge_feats, random_feats]
 
-    for seq_i, seq_cl_feats in enumerate(feats[:1]):
+    for seq_i, seq_cl_feats in enumerate(feats[1:2]):
         cl_feats = seq_cl_feats[0]  # Get the first sentence feat
 
         # RESET THE CL INDEX
@@ -338,13 +336,17 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
 
         generate_res = []
         for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
+
+            print('output_sequences.shape :{}'.format(output_sequences.shape))
+
             generated_sequence = generated_sequence.tolist()
 
             # Decode text
-            # text = tokenizer.decode(generated_sequence, clean_up_tokenization_spaces=True)
+            # text = tokenizer.decode(generated_sequence,
+            # =True)
             text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
-
-            print('========before generate text: {}==========='.format(text))
+            print('generated_sequence: {}'.format(generated_sequence))
+            print('before generate text: {}'.format(text))
 
             # Remove all text after the stop token
             stop_idx = []
@@ -375,7 +377,6 @@ def main():
     parser.add_argument("--num-sentences", type=int, default=0)
     parser.add_argument("--min_length", type=int, default=1)
     parser.add_argument("--max_length", type=int, default=1024)
-    parser.add_argument("--split-sentences", type=int, default=1)
     parser.add_argument("--multiply-sentences", type=int, default=1)
     parser.add_argument("--p", type=float, default=0.99)
     parser.add_argument("--block_size", type=int, default=1024)
@@ -418,8 +419,6 @@ def main():
     tokenizer.bos_token = '[ <|endoftext|> ]'
     tokenizer.pad_token = tokenizer.eos_token
 
-    # tokenizer.eos_token_id = tokenizer.convert_tokens_to_ids('[ <|endoftext|> ]')  # 修改id 50256->21130  hugging默认是50256，即英文模型大小
-    # tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids('[ <|endoftext|> ]')  # 修改id 50256->21130
     print('tokenizer.eos_token_id:{}'.format(tokenizer.eos_token_id))
     print('tokenizer.bos_token_id:{}'.format(tokenizer.bos_token_id))
 
