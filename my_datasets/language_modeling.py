@@ -130,7 +130,7 @@ class EekeDataset():
         if self.train:
             print('==============loading erke train data==============')
             # self.data_files = ['valid-.json']
-            self.data_files = ['train-.txt']
+            self.data_files = ['valid-.txt']
         else:
             print('==============loading erke valid data==============')
             # self.data_files = ['valid-.json']
@@ -155,12 +155,11 @@ class EekeDataset():
         )
         input_ids = output['input_ids'].squeeze(0)
         attention_mask = output['attention_mask'].squeeze(0)
-        eos_input_ids = torch.tensor([[self.tokenizer.eos_token_id]*input_ids.shape[0]])
-        eos_attention = torch.tensor([[0]*input_ids.shape[0]])
+        eos_input_ids = torch.tensor([[self.tokenizer.eos_token_id] * input_ids.shape[0]])
+        eos_attention = torch.tensor([[0] * input_ids.shape[0]])
         input_ids = torch.cat((input_ids, eos_input_ids.T), dim=1)
         attention_mask = torch.cat((attention_mask, eos_attention.T), dim=1)
         return input_ids.to(device), attention_mask.to(device)
-
 
     def _process_dataset(self):
         num_filtered = 0
@@ -184,9 +183,10 @@ class EekeDataset():
                 assistant_id = self.tokenizer.convert_tokens_to_ids('[ assistant ]')
                 token_type_ids.append(self.tokenizer.bos_token_id)
                 labels.append(-1)
+                sen_len = []
 
                 conversation = conversation.strip().split('\t')
-                for sentence_counter, utterance in enumerate(conversation):
+                for sen_count, utterance in enumerate(conversation):
                     sp = utterance.split('[next]')
                     new_txt = []
                     for i, line in enumerate(sp):
@@ -196,26 +196,36 @@ class EekeDataset():
                         else:
                             new_txt.append(line)
 
-                    if sentence_counter % 2 == 0:
-                        text = "[ {} ] {}".format('user'.upper(), ''.join(new_txt))
-                    else:
-                        text = "[ {} ] {}".format('assistant'.upper(), ''.join(new_txt))
+                    if sen_count % 2 == 0:#患者
+                        text = ''.join(new_txt)
+                        token_type_ids.extend([user_id] * len(self.tokenizer.tokenize(text)))
+                        text_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
+                        if sen_count != len(conversation) - 1:
+                            labels.extend([-1] * len(self.tokenizer.tokenize(text)))
+                        else:
+                            labels.extend(text_ids)
 
-                    text_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
+                        if sen_count == 0 or sen_count == len(conversation) - 1:
+                            sen_len.append(len(self.tokenizer.tokenize(text)) + 1)
+                        else:
+                            sen_len.append(len(self.tokenizer.tokenize(text)))
+
+                    else:
+                        text = ''.join(new_txt)
+                        text_ids = self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(text))
+                        token_type_ids.extend([assistant_id] * len(self.tokenizer.tokenize(text)))
+                        if sen_count != len(conversation) - 1:
+                            labels.extend([-1] * len(self.tokenizer.tokenize(text)))
+                        else:
+                            labels.extend(text_ids)
+
+                        if sen_count == 0 or sen_count == len(conversation) - 1:
+                            sen_len.append(len(self.tokenizer.tokenize(text)) + 1)
+                        else:
+                            sen_len.append(len(self.tokenizer.tokenize(text)))
+
                     full_text += text + " "
                     cl_text.append(text)
-                    if sentence_counter % 2 == 0: #患者
-                        token_type_ids.extend([user_id] * len(self.tokenizer.tokenize(text)))
-                        if sentence_counter != len(conversation) - 1:
-                            labels.extend([-1] * len(self.tokenizer.tokenize(text)))
-                        else:
-                            labels.extend(text_ids)
-                    else:
-                        token_type_ids.extend([assistant_id] * len(self.tokenizer.tokenize(text)))
-                        if sentence_counter != len(conversation) - 1:
-                            labels.extend([-1] * len(self.tokenizer.tokenize(text)))
-                        else:
-                            labels.extend(text_ids)
 
                 token_type_ids.append(self.tokenizer.eos_token_id)
                 labels.append(self.tokenizer.eos_token_id)
@@ -228,12 +238,10 @@ class EekeDataset():
                 if len(input_ids) >= self.block_size:
                     num_filtered+=1
                 else:
-                    # example = self.tokenizer.build_inputs_with_special_tokens(tokenized_text) #在头尾分别添加[CLS]和[SEP] token
-                    # print('example: {}'.format(example))
                     self.examples.append(input_ids)
                     self.labels.append(labels)
                     self.cl_texts.append(full_text)
-                    self.get_cl_embeddings(input_ids, cl_text)
+                    self.get_cl_embeddings(sen_len, cl_text)
                     self.token_type_ids.append(token_type_ids)
                     self.raw_texts.append(row)
             if len(self.examples) > 1204:
@@ -259,33 +267,26 @@ class EekeDataset():
         '''
         eos_idxs = []
         for tok in self.special_tokens[:2]:
-            eos_idxs += [i-1 for i, x in enumerate(tokenized_example) if x == tok]
+            eos_idxs += [i - 1 for i, x in enumerate(tokenized_example) if x == tok]
         eos_idxs += [len(tokenized_example)]
         eos_idxs.sort()
         eos_idxs = eos_idxs[1:]
         return eos_idxs
 
-    def get_cl_embeddings(self, tokenized_example, cl_text):
+    def get_cl_embeddings(self, sen_len, cl_text):
 
         cl_embeddings = []
-        eos_idxs = self.get_end_points(tokenized_example)
-        # print('tokenized_example : {}'.format(tokenized_example))
-        # print('eos_idxs : {}'.format(eos_idxs))
-        # print('=======len eos_idxs :{}============'.format(len(eos_idxs)))
-        # print('=======len cl_text :{}============'.format(len(cl_text)))
 
-        assert len(eos_idxs) == len(cl_text)
+        assert len(sen_len) == len(cl_text)
 
         cl_input_ids, cl_attention_mask = self.cl_tokenize(cl_text, self.device)
         cl_feats = self.cl_model.forward(
             input_ids=cl_input_ids, attention_mask=cl_attention_mask) # 1, feat_size
         # Align feats to the sentence length
-        last_idx = 0
-        for eos_idx, feat in zip(eos_idxs, cl_feats):
-            cl_embeddings += [feat] * (eos_idx - last_idx)
-            last_idx = eos_idx
+        for s_len, feat in zip(sen_len, cl_feats):
+            cl_embeddings += [feat] * s_len
 
-        assert len(cl_embeddings) == len(tokenized_example)
+        assert len(cl_embeddings) == sum(sen_len)
 
         if self.cl_offset:
             cl_embeddings = cl_embeddings[self.cl_offset:] + [cl_embeddings[-1]] * self.cl_offset

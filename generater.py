@@ -174,22 +174,27 @@ def cl_tokenize(tokenizer, text, device):
     print('cl input_ids:{}'.format(input_ids))
 
     attention_mask = output['attention_mask']
-    eos_input_ids = torch.tensor([[tokenizer.eos_token_id]*input_ids.shape[0]])
-    eos_attention = torch.tensor([[0]*input_ids.shape[0]])
+    eos_input_ids = torch.tensor([[tokenizer.eos_token_id] * input_ids.shape[0]])
+    eos_attention = torch.tensor([[0] * input_ids.shape[0]])
     input_ids = torch.cat((input_ids, eos_input_ids.T), dim=1)
     attention_mask = torch.cat((attention_mask, eos_attention.T), dim=1)
     return input_ids.to(device), attention_mask.to(device)
 
-def get_cl_embeddings(history, cl_model, tokenizer, special_ids, device):
+def get_cl_embeddings(history, cl_model, tokenizer, device):
     full_text = ""
     cl_text = []
+    print('history: {}'.format(history))
 
     token_type_ids = []
     user_id = tokenizer.convert_tokens_to_ids('[ user ]')
     assistant_id = tokenizer.convert_tokens_to_ids('[ assistant ]')
     token_type_ids.append(tokenizer.bos_token_id)
+    print('user_id :{}'.format(user_id))
+    print('assistant_id :{}'.format(assistant_id))
 
-    for i, utterance in enumerate(history):
+    sen_len = [] #记录每句话的长度，用于扩展cl embedding
+
+    for sen_con, utterance in enumerate(history):
         sp = utterance.split('[next]')
         new_txt = []
         for i, line in enumerate(sp):
@@ -198,53 +203,44 @@ def get_cl_embeddings(history, cl_model, tokenizer, special_ids, device):
                 new_txt.append(' [ [next] ] ')
             else:
                 new_txt.append(line)
-        if i % 2 == 0: #患者
-            text = "[ {} ] {}".format('USER', ''.join(new_txt))
+        if sen_con % 2 == 0: #患者
+            text = ''.join(new_txt)
             full_text += text + " "
             cl_text.append(text)
             token_type_ids.extend([user_id] * len(tokenizer.tokenize(text)))
+            sen_len.append(len(tokenizer.tokenize(text)))
         else:
-            text = "[ {} ] {}".format('ASSISTANT', ''.join(new_txt))
+            text = ''.join(new_txt)
             full_text += text + " "
             cl_text.append(text)
             token_type_ids.extend([assistant_id] * len(tokenizer.tokenize(text)))
+            sen_len.append(len(tokenizer.tokenize(text)))
 
-    token_type_ids.append(tokenizer.eos_token_id)
+    # token_type_ids.append(tokenizer.eos_token_id)
+    token_type_ids.append(assistant_id) #最后一个添加医生id，生成时是从最后一个进行取
 
     print('full_text :{}'.format(full_text))
 
     row = f"{tokenizer.bos_token} {full_text} {tokenizer.eos_token}"
     print('row text:{}'.format(row))
     input_ids = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(row))
-    # input_ids = tokenizer.build_inputs_with_special_tokens(tokenized_text)
 
-    print('special_tokens:{}'.format(special_ids))
-
-    cl_embeddings = []
-    eos_idxs = []
-    for tok in special_ids[:2]:
-        eos_idxs += [i - 1 for i, x in enumerate(input_ids) if x == tok]
-    eos_idxs += [len(input_ids)]
-    eos_idxs.sort()
-    eos_idxs = eos_idxs[1:]
-
-    print('eos_idxs :{}\tlenght:{}'.format(eos_idxs,len(eos_idxs)))
+    print('sen_len :{}'.format(sen_len))
     print('cl_text :{}\tlenght：{}'.format(cl_text,len(cl_text)))
-    assert len(eos_idxs) == len(cl_text)
+    assert len(sen_len) == len(cl_text)
 
     cl_input_ids, cl_attention_mask = cl_tokenize(tokenizer, cl_text, device)
-    cl_feats = cl_model.forward(
-        input_ids=cl_input_ids, attention_mask=cl_attention_mask)  # 1, feat_size
-    last_idx = 0
-    for eos_idx, feat in zip(eos_idxs, cl_feats):
-        cl_embeddings += [feat] * (eos_idx - last_idx)
-        last_idx = eos_idx
+    cl_feats = cl_model.forward(input_ids=cl_input_ids, attention_mask=cl_attention_mask)  # 1, feat_size
 
-    return torch.tensor([input_ids]).to(device), cl_embeddings, eos_idxs, torch.tensor([token_type_ids]).to(device)
+    cl_embeddings = [] #记录句子每个token的布朗状态
+    for s_len, feat in zip(sen_len, cl_feats):
+        cl_embeddings += [feat] * s_len
+
+    return torch.tensor([input_ids]).to(device), cl_embeddings, sen_len, torch.tensor([token_type_ids]).to(device)
 
 def generter(model, history, cl_model, tokenizer, special_tokens, args, last_latent_mu, last_latent_std):
     # Get all the CL feats
-    input_ids, cl_embeddings, end, token_type_ids = get_cl_embeddings(history, cl_model, tokenizer, special_tokens, args.device)
+    input_ids, cl_embeddings, sen_len, token_type_ids = get_cl_embeddings(history, cl_model, tokenizer, args.device)
     # print(cl_embeddings)
     true_cl_feats = torch.stack(cl_embeddings)
     # print(true_cl_feats)
@@ -253,136 +249,115 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
     print('token_type_ids:{}'.format(token_type_ids))
     print('token_type_ids shape:{}'.format(token_type_ids.shape))
 
-    LABELS = ['TRUE CL', 'BRIDGE CL (DE)', 'RANDOM CL']
+    LABELS = ['TRUE CL', 'BRIDGE CL (DE)']
     # INTERPOLATION - BRIDGE
     B_T = np.random.normal(loc=last_latent_mu, scale=last_latent_std)
 
-    num_sentences = len(true_cl_feats)
-
-    print("Original num sentences: {}".format(len(end)))
-    print("Target num sentences: {}".format(num_sentences))
-    end_lengths = np.ones(len(end))
+    B_0 = true_cl_feats[0] # 对话历史的最后一句话作为起始状态
+    end_lengths = np.ones(15)
     end_lengths = end_lengths.astype(np.int)
     print("end_lengths :{}".format(end_lengths))
-
-    B_0 = true_cl_feats[-2] # 取上一次医生的话作为起始状态
-    end_lengths = np.ones(3)
-    end_lengths = end_lengths.astype(np.int)
+    num_sentences = len(end_lengths)
+    print("Target num sentences: {}".format(num_sentences))
 
     bridge_feats = simulate_brownian_bridge(
         B_0=B_0, B_T=B_T, num_samples=num_sentences,
         sentence_lengths=end_lengths
     ) #根据起始状态和最终状态生成整个布朗桥
 
-    bridge_feats = torch.tensor(
-        bridge_feats, dtype=true_cl_feats.dtype).to(args.device)
-    # RANDOM
-    random_feats = torch.rand(true_cl_feats.shape).to(args.device) # 随机生成布朗桥
-    feats = [true_cl_feats, bridge_feats, random_feats]
+    bridge_feats = torch.tensor(bridge_feats, dtype=true_cl_feats.dtype).to(args.device)
 
-    for seq_i, seq_cl_feats in enumerate(feats[1:2]):
-        cl_feats = seq_cl_feats[0]  # Get the first sentence feat
+    cl_feats = bridge_feats[0]  # Get the first sentence feat
 
-        # RESET THE CL INDEX
-        model.transformer._cur_cl_idx = 0
-        model.transformer._has_reset = False
+    # RESET THE CL INDEX
+    model.transformer._cur_cl_idx = 0
+    model.transformer._has_reset = False
 
-        if args.method == "sample":
-            output_sequences = model.generate(
-                input_ids=input_ids,
-                token_type_ids=token_type_ids,
-                cl_feats=cl_feats,  # .to(args.device),
-                seq_cl_feats=seq_cl_feats,
-                max_length=args.max_length,
-                temperature=args.temperature,
-                top_k=args.k,
-                top_p=args.p,
-                repetition_penalty=args.repetition_penalty,
-                do_sample=True,
-                num_return_sequences=args.num_return_sequences,
-                bad_words_ids=args.bad_words_ids,
-                # List of token ids that are not allowed to be generated. In order to get the
-                # tokens of the words that should not appear in the generated text,
-                # use :obj:`tokenizer.encode(bad_word, add_prefix_space=True)`
-                min_length=args.min_length
-            )
+    if args.method == "sample":
+        output_sequences = model.generate(
+            input_ids=input_ids,
+            token_type_ids=token_type_ids,
+            cl_feats=cl_feats,  # .to(args.device),
+            seq_cl_feats=bridge_feats,
+            max_length=args.max_length,
+            temperature=args.temperature,
+            top_k=args.k,
+            top_p=args.p,
+            repetition_penalty=args.repetition_penalty,
+            do_sample=True,
+            num_return_sequences=args.num_return_sequences,
+            bad_words_ids=args.bad_words_ids, #禁止生成的词id列表
+            # List of token ids that are not allowed to be generated. In order to get the
+            # tokens of the words that should not appear in the generated text,
+            # use :obj:`tokenizer.encode(bad_word, add_prefix_space=True)`
+            min_length=args.min_length,
+            use_cache=True,
+            no_repeat_ngram_size=2 #用于控制重复词生成，默认是0，如果大于0，则相应N-gram只出现一次
+        )
 
-        # # NOTE GREEDY
-        elif args.method == "greedy":
-            output_sequences = model.generate(
-                input_ids=input_ids,
-                token_type_ids=token_type_ids,
-                cl_feats=cl_feats,  # .to(args.device),
-                seq_cl_feats=seq_cl_feats,
-                max_length=args.max_length,
-                num_return_sequences=args.num_return_sequences,
-            )
+    # # NOTE GREEDY
+    elif args.method == "greedy":
+        output_sequences = model.generate(
+            input_ids=input_ids,
+            token_type_ids=token_type_ids,
+            cl_feats=cl_feats,  # .to(args.device),
+            seq_cl_feats=bridge_feats,
+            max_length=args.max_length,
+            num_return_sequences=args.num_return_sequences,
+        )
 
-        # # NOTE Beam search
-        elif args.method == "beam":
-            output_sequences = model.generate(
-                input_ids=input_ids,
-                token_type_ids=token_type_ids,
-                cl_feats=cl_feats,  # .to(args.device),
-                seq_cl_feats=seq_cl_feats,
-                max_length=args.max_length,
-                num_beams=5,
-                early_stopping=True,
-                num_return_sequences=args.num_return_sequences,
-                # no_repeat_ngram_size=2, # To avoid repetition
-            )
-        else:
-            raise ValueError("need to specify --method")
+    # # NOTE Beam search
+    elif args.method == "beam":
+        output_sequences = model.generate(
+            input_ids=input_ids,
+            token_type_ids=token_type_ids,
+            cl_feats=cl_feats,  # .to(args.device),
+            seq_cl_feats=bridge_feats,
+            max_length=args.max_length,
+            num_beams=5,
+            early_stopping=True,
+            num_return_sequences=args.num_return_sequences,
+            # no_repeat_ngram_size=2, # To avoid repetition
+        )
+    else:
+        raise ValueError("need to specify --method")
 
-        # Remove the batch dimension when returning multiple sequences
-        if len(output_sequences.shape) > 2:
-            output_sequences.squeeze_()
+    # Remove the batch dimension when returning multiple sequences
+    if len(output_sequences.shape) > 2:
+        output_sequences.squeeze_()
 
-        generate_res = []
-        for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
+    generate_res = []
+    for generated_sequence_idx, generated_sequence in enumerate(output_sequences):
 
-            print('output_sequences.shape :{}'.format(output_sequences.shape))
+        generated_sequence = generated_sequence.tolist()
+        generated_sequence = generated_sequence[len(input_ids[0]):] #将input 部分去除
 
-            generated_sequence = generated_sequence.tolist()
+        clean_ids = []
+        for id in generated_sequence:
+            if id not in special_tokens[:3]:
+                clean_ids.append(id)
 
-            # Decode text
-            # text = tokenizer.decode(generated_sequence,
-            # =True)
-            text = tokenizer.decode(generated_sequence, skip_special_tokens=True)
-            print('generated_sequence: {}'.format(generated_sequence))
-            print('before generate text: {}'.format(text))
+        text = tokenizer.decode(clean_ids, skip_special_tokens=True)
+        print('before generate text: {}'.format(text))
 
-            # Remove all text after the stop token
-            stop_idx = []
-            for stop in args.stop_token:
-                if text.find(stop) != -1:
-                    if text.find(stop) != 0:
-                        stop_idx.append(text.find(stop))
-                    else:
-                        text = text[len(stop)+1:]
-                        stop_idx.append(text.find(stop))
-            stop_idx.sort()
-            print('stop_idx :{}'.format(stop_idx))
-            text = text[:stop_idx[0]]
-
-            generate_res.append(text)
-        return generate_res
+        generate_res.append(text)
+    return generate_res
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True, help="Path to pre-trained model")
     parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--stop_token", type=str, default=None, help="Token at which text generation is stopped")
-    parser.add_argument("--temperature", type=float, default=1.0,
+    parser.add_argument("--temperature", type=float, default=0.9,
                         help="temperature of 1.0 has no effect, lower tend toward greedy sampling", )
-    parser.add_argument("--repetition_penalty", type=float, default=1.0,
+    parser.add_argument("--repetition_penalty", type=float, default=2.0,
                         help="primarily useful for CTRL model; in that case, use 1.2")
-    parser.add_argument("--k", type=int, default=0)
+    parser.add_argument("--k", type=int, default=200)
     parser.add_argument("--num-sentences", type=int, default=0)
     parser.add_argument("--min_length", type=int, default=1)
     parser.add_argument("--max_length", type=int, default=1024)
     parser.add_argument("--multiply-sentences", type=int, default=1)
-    parser.add_argument("--p", type=float, default=0.99)
+    parser.add_argument("--p", type=float, default=0.90)
     parser.add_argument("--block_size", type=int, default=1024)
 
     parser.add_argument("--padding_text", type=str, default="", help="Deprecated, the use of `--prefix` is preferred.")
