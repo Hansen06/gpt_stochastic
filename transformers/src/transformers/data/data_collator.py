@@ -150,11 +150,11 @@ class DataCollatorForTimeControl:
         to the model. See glue and ner for example of how it's useful.
         """
 
-        input_ids, labels, section_ids, cl_embeddings, raw_text = zip(*features)
+        input_ids, labels, token_type_ids, cl_embeddings, raw_text = zip(*features)
 
         batch = {"input_ids": self._tensorize_batch(input_ids),
                  "labels": self._tensorize_batch(labels),
-                 "section_ids": self._tensorize_batch(section_ids),
+                 "token_type_ids": self._tensorize_batch(token_type_ids),
                  "seq_cl_feats": self._tensorize_batch(cl_embeddings),
                  "raw_text": raw_text}
 

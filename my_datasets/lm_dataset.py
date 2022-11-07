@@ -1,88 +1,50 @@
 # language model 数据加载模块
 
-import json
 import os
-import pickle
-import random
-import time
-from typing import Dict, List, Optional
-import copy
+from collections import defaultdict
 
-import numpy as np
 import torch
 from torch.utils.data.dataset import Dataset
 
-from filelock import FileLock
-import datasets
-from tqdm import tqdm
-
-from collections import defaultdict
-
 import constants
-
 
 class TextDataset(Dataset):
     """
     This will be superseded by a framework-agnostic approach soon.
     """
+    def __init__(self, data_path=None):
+        self.data_path = data_path
+        self.data_files = list()
+        self.data_files_offset = list()
+        self.data_len = 0
+        self._check_files()
 
-    def __init__(
-            self,
-            tokenizer,
-            file_path: str,
-            block_size: int,
-            overwrite_cache=False,
-            cache_dir: Optional[str] = None,
-    ):
+    def _check_files(self):
+        if self.data_path is None:
+            raise RuntimeError("Data path cannot be \
+                empty at same time.")
 
-        assert os.path.isfile(file_path), f"Input file path {file_path} not found"
-
-        block_size = block_size - tokenizer.num_special_tokens_to_add(pair=False)
-
-        directory, filename = os.path.split(file_path)
-        cached_features_file = os.path.join(
-            cache_dir if cache_dir is not None else directory,
-            f"cached_lm_{tokenizer.__class__.__name__}_{block_size}_{filename}",
-        )
-
-        # Make sure only the first process in distributed training processes the dataset,
-        # and the others will use the cache.
-        lock_path = cached_features_file + ".lock"
-        with FileLock(lock_path):
-
-            if os.path.exists(cached_features_file) and not overwrite_cache:
-                start = time.time()
-                with open(cached_features_file, "rb") as handle:
-                    self.examples = pickle.load(handle)
-
-            else:
-
-                self.examples = []
-                with open(file_path, encoding="utf-8") as f:
-                    text = f.read()
-
-                tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
-
-                for i in range(0, len(tokenized_text) - block_size + 1, block_size):  # Truncate in block of block_size
-                    self.examples.append(
-                        tokenizer.build_inputs_with_special_tokens(tokenized_text[i: i + block_size])
-                    )
-                # Note that we are losing the last truncated example here for the sake of simplicity (no padding)
-                # If your dataset is small, first you should look for a bigger one :-) and second you
-                # can change this behavior by adding (model specific) padding.
-
-                start = time.time()
-                with open(cached_features_file, "wb") as handle:
-                    pickle.dump(self.examples, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        if self.data_path:
+            if not os.path.exists(self.data_path):
+                raise RuntimeError("Training files does not exist at " + self.data_path)
+            prepare_files_offset(self.data_path, self.data_files,
+                                 self.data_files_offset)
+            # print(self.data_files_offset)
+            self.data_len = len(self.data_files_offset)
 
     def __len__(self):
-        return len(self.examples)
+        return self.data_len
 
-    def __getitem__(self, i) -> torch.Tensor:
-        return torch.tensor(self.examples[i], dtype=torch.long)
+    def _get_line(self, index):
+        tup = self.data_files_offset[index]
+        target_file = self.data_files[tup[0]]
+        with open(target_file, "r", encoding="utf-8") as f:
+            f.seek(tup[1])
+            line = f.readline()
+        return line
 
 
-class EekeDataset():
+class EekeDataset(TextDataset):
     """
     This will be superseded by a framework-agnostic approach
     soon.
@@ -94,10 +56,9 @@ class EekeDataset():
                  block_size: int,
                  use_section_null: bool,
                  special_words: list,
-                 data_dir=constants.PATH2Erke,
-                 data_names: str = 'wikihow'
+                 *inputs, **kwargs
                  ):
-        self.data_names = data_names
+        super(EekeDataset, self).__init__(*inputs, **kwargs)
         self.cpu_device = torch.device('cpu')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.cl_model = cl_model
@@ -105,32 +66,14 @@ class EekeDataset():
         self.special_words = special_words
         assert self.special_words  # should not be emtpy
         self.special_tokens = [_[1] for _ in tokenizer(self.special_words)['input_ids']]
-        self.data_dir = data_dir
-        self.train = 'train' in self.data_names
         self.block_size = block_size - tokenizer.num_special_tokens_to_add(pair=False)
         self.cl_offset = 0
-
-        if self.train:
-            print('==============loading erke train data==============')
-            # self.data_files = ['valid-.json']
-            self.data_files = ['train-.txt']
-        else:
-            print('==============loading erke valid data==============')
-            # self.data_files = ['valid-.json']
-            self.data_files = ['valid-.txt']
-
-        self.all_data = []
-        with open(os.path.join(self.data_dir, self.data_files[0]), 'r', encoding='utf-8') as f:
-            for line in f.readlines():
-                self.all_data.append(line.strip())
-
-        # self.all_data = json.load(open(os.path.join(self.data_dir, self.data_files[0]), 'rb'))
 
         self.use_section_null = use_section_null
         self.tokenizer = tokenizer
 
     def __getitem__(self, index):
-        conversation = self.all_data[index]
+        conversation = self._get_line(index)
         full_text = ""
         cl_text = []
         sen_len = []
@@ -252,5 +195,25 @@ class EekeDataset():
 
         return cl_embeddings
 
-    def __len__(self):
-        return len(self.all_data)
+
+def prepare_files_offset(path, files_list, offset_list):
+    """Fill the file index and offsets of each line in files_list in offset_list
+    Args:
+        path: string of file path, support single file or file dir
+        files_list: the list contains file names
+        offset_list: the list contains the tuple of file name index and offset
+    """
+    if os.path.isdir(path):  # for multi-file, its input is a dir
+        files_list.extend([os.path.join(path, f) for f in os.listdir(path)])
+    elif os.path.isfile(path):  # for single file, its input is a file
+        files_list.append(path)
+    else:
+        raise RuntimeError(path + " is not a normal file.")
+    print(files_list)
+    for i, f in enumerate(files_list):
+        offset = 0
+        with open(f, "r", encoding="utf-8") as single_file:
+            for line in single_file:
+                tup = (i, offset)
+                offset_list.append(tup)
+                offset += len(bytes(line, encoding='utf-8'))

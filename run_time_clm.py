@@ -219,52 +219,6 @@ class DataTrainingArguments:
                 extension = self.validation_file.split(".")[-1]
                 assert extension in ["csv", "json", "txt"], "`validation_file` should be a csv, a json or a txt file."
 
-
-def get_data_paths(data_args: DataTrainingArguments):
-    """Datasets:
-
-    """
-    assert data_args.dataset_name in [
-        'wikisection', 'roc_stories', 'wikihow', 'recipe', 'erke', 'tickettalk']
-    # Default datapaths
-    train_path = os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.train.txt")
-    val_path = os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.val.txt")
-    test_path = os.path.join(constants.PATH2WIKISECTION, "wikisection_withSections.test.txt")
-    if "erke" in data_args.dataset_name:
-        train_path = os.path.join(constants.PATH2Erke, "train-.json")
-        val_path = os.path.join(constants.PATH2Erke, "valid-.json")
-        test_path = os.path.join(constants.PATH2Erke, "valid-.json")
-    return train_path, val_path, test_path
-
-def get_dataset(
-    cl_model,
-    args: DataTrainingArguments,
-    tokenizer: PreTrainedTokenizer,
-    file_path: str,
-    special_words: list,
-    data_names,
-):
-    if 'tickettalk' in args.dataset_name:
-        dataset = TaskmasterDataset(
-            tokenizer=tokenizer,
-            file_path=file_path,
-            use_section_null=args.use_section_null,
-            special_words=special_words,
-            block_size=args.block_size,
-            cl_model=cl_model,
-            data_names=data_names
-        )
-    elif 'erke' in args.dataset_name:
-        dataset = EekeDataset(
-            tokenizer=tokenizer,
-            use_section_null=args.use_section_null,
-            special_words=special_words,
-            block_size=args.block_size,
-            cl_model=cl_model,
-            data_names=data_names
-        )
-    return dataset
-
 def get_data_collator(
         args: DataTrainingArguments,
         tokenizer: PreTrainedTokenizer):
@@ -525,22 +479,22 @@ def main():
         block_size = min(data_args.block_size, tokenizer.model_max_length)
 
     data_args.block_size = block_size
-    ### Data
-    train_path, val_path, eval_path = get_data_paths(data_args)
 
-    train_dataset = get_dataset(
-        args=data_args, tokenizer=tokenizer,
-        file_path=train_path,
+    train_dataset = EekeDataset(
+        tokenizer=tokenizer,
+        use_section_null=data_args.use_section_null,
         special_words=SECTION_IDS,
+        block_size=data_args.block_size,
         cl_model=CL_MODEL,
-        data_names='train'
+        data_path=constants.PATH2Erke + '/train-.txt'
     )
-    eval_dataset = get_dataset(
-        args=data_args, tokenizer=tokenizer,
-        file_path=eval_path,
+    eval_dataset = EekeDataset(
+        tokenizer=tokenizer,
+        use_section_null=data_args.use_section_null,
         special_words=SECTION_IDS,
+        block_size=data_args.block_size,
         cl_model=CL_MODEL,
-        data_names = 'eval'
+        data_path=constants.PATH2Erke + '/valid-.txt'
     )
 
     data_collator = get_data_collator(
