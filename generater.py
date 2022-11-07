@@ -249,12 +249,11 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
     print('token_type_ids:{}'.format(token_type_ids))
     print('token_type_ids shape:{}'.format(token_type_ids.shape))
 
-    LABELS = ['TRUE CL', 'BRIDGE CL (DE)']
     # INTERPOLATION - BRIDGE
     B_T = np.random.normal(loc=last_latent_mu, scale=last_latent_std)
 
-    B_0 = true_cl_feats[0] # 对话历史的最后一句话作为起始状态
-    end_lengths = np.ones(15)
+    B_0 = true_cl_feats[-1] # 对话历史的最后一句话作为起始状态
+    end_lengths = np.ones(3)
     end_lengths = end_lengths.astype(np.int)
     print("end_lengths :{}".format(end_lengths))
     num_sentences = len(end_lengths)
@@ -268,6 +267,7 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
     bridge_feats = torch.tensor(bridge_feats, dtype=true_cl_feats.dtype).to(args.device)
 
     cl_feats = bridge_feats[0]  # Get the first sentence feat
+    cl_feats = true_cl_feats[0]  # Get the first sentence feat
 
     # RESET THE CL INDEX
     model.transformer._cur_cl_idx = 0
@@ -292,7 +292,7 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
             # use :obj:`tokenizer.encode(bad_word, add_prefix_space=True)`
             min_length=args.min_length,
             use_cache=True,
-            no_repeat_ngram_size=2 #用于控制重复词生成，默认是0，如果大于0，则相应N-gram只出现一次
+            # no_repeat_ngram_size=2 #用于控制重复词生成，默认是0，如果大于0，则相应N-gram只出现一次
         )
 
     # # NOTE GREEDY
@@ -338,7 +338,6 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
                 clean_ids.append(id)
 
         text = tokenizer.decode(clean_ids, skip_special_tokens=True)
-        print('before generate text: {}'.format(text))
 
         generate_res.append(text)
     return generate_res
@@ -346,18 +345,17 @@ def generter(model, history, cl_model, tokenizer, special_tokens, args, last_lat
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name_or_path", default=None, type=str, required=True, help="Path to pre-trained model")
-    parser.add_argument("--prompt", type=str, default="")
     parser.add_argument("--stop_token", type=str, default=None, help="Token at which text generation is stopped")
-    parser.add_argument("--temperature", type=float, default=0.9,
+    parser.add_argument("--temperature", type=float, default=1.0,
                         help="temperature of 1.0 has no effect, lower tend toward greedy sampling", )
-    parser.add_argument("--repetition_penalty", type=float, default=2.0,
+    parser.add_argument("--repetition_penalty", type=float, default=1.0,
                         help="primarily useful for CTRL model; in that case, use 1.2")
-    parser.add_argument("--k", type=int, default=200)
+    parser.add_argument("--k", type=int, default=0)
     parser.add_argument("--num-sentences", type=int, default=0)
     parser.add_argument("--min_length", type=int, default=1)
     parser.add_argument("--max_length", type=int, default=1024)
     parser.add_argument("--multiply-sentences", type=int, default=1)
-    parser.add_argument("--p", type=float, default=0.90)
+    parser.add_argument("--p", type=float, default=0.99)
     parser.add_argument("--block_size", type=int, default=1024)
 
     parser.add_argument("--padding_text", type=str, default="", help="Deprecated, the use of `--prefix` is preferred.")
@@ -419,7 +417,6 @@ def main():
     model.transformer._config.use_noisy_embeddings = False
     logger.info(args)
 
-    args.prompt_text = args.prompt if args.prompt else ""  # input("Model prompt >>> ")
     args.stop_token = [
             '[ user ]',
             '[ assistant ]',
@@ -453,7 +450,7 @@ def main():
         history.append(raw_text)
         out_text = generter(model, history, cl_model, tokenizer, SECTION_IDS, args, last_latent_mu, last_latent_std)
         print('out_text: {}'.format(out_text))
-        history.append(out_text[0])
+        history.append(''.join((out_text[0]).split(' ')))
 
 
 
